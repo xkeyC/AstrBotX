@@ -407,7 +407,8 @@ def test_realtime_prompts_name_the_bot_and_the_session_adds_the_date():
 
     options = voice.VoiceOptions(name="Jarvis", aliases=["贾维斯"])
     today = datetime.datetime.now().astimezone().strftime("%Y-%m-%d")
-    assert '("Jarvis", "贾维斯")' in mumble_voice.channel_prompt(options)
+    assert '("Jarvis", "贾维斯")' in mumble_voice.channel_prompt(options, gated=False)
+    assert '("Jarvis", "贾维斯")' in mumble_voice.channel_prompt(options, gated=True)
     assert "alice" in mumble_voice.whisper_prompt(options, "alice")
     # The date goes with each conversation's start (not in the prompt kept
     # by the thread).

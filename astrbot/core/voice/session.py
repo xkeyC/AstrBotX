@@ -171,6 +171,42 @@ class VoiceMedia(Protocol):
         """Drops the model's audio not played yet (its speech was cut)."""
 
 
+def wakes_on_name(others: int | None) -> bool:
+    """Whether a group conversation with ``others`` other people (None: not
+    known) hears only what calls the bot by name (with what was said just
+    before it); with one other person (or none) it hears everything."""
+    return others is None or others > 1
+
+
+def group_rule(options: VoiceOptions, *, gated: bool) -> str:
+    """When the voice model of a group conversation (a channel, a room)
+    speaks. ``gated``: the voice server passes on only what calls the bot by
+    name, everything when one person is left to talk with (the
+    ``local_infra`` backend); else the model hears all the talk and must
+    tell for itself."""
+    aliases = [a for a in options.aliases if a and a != options.name]
+    names = (
+        f' ("{options.name}"' + "".join(f', "{a}"' for a in aliases) + ")"
+        if aliases
+        else f' "{options.name}"'
+    )
+    if gated:
+        return (
+            f"What you are given to answer is meant for you: with several people around, only what "
+            f"someone says calling you by your name{names} reaches you (with what others said just "
+            f"before it, as context: not to you); with just one other person, all they say does. "
+            f"Answer it, unless it is not for you after all (your name only came up in their talk, "
+            f"or they are talking to someone else, or on the phone): then produce no audio and no "
+            f"text at all - complete silence."
+        )
+    return (
+        f"The one rule that matters most: speak ONLY when the speaker says your name{names} to "
+        f"you in that utterance, or is directly continuing an exchange with you from a few seconds "
+        f"ago. In every other case produce no audio and no text at all - complete silence. Do not "
+        f'acknowledge, do not react, do not say "mm", do not comment, do not delegate.'
+    )
+
+
 @dataclass
 class VoiceOptions:
     name: str
@@ -326,6 +362,11 @@ class VoiceSession:
         # sender at a time, so the newest is what it ends with.
         self._context_given = ""
         self._context_lock = asyncio.Lock()
+        # Hear only what calls the bot by name (``set_people``), and what
+        # the voice server was last told.
+        self._wake = wakes_on_name(None)
+        self._wake_given: bool | None = None
+        self._wake_lock = asyncio.Lock()
         # The transcript and stats of the thread (see record.py).
         self._record: VoiceRecord | None = None
         self._pc: RTCPeerConnection | None = None
@@ -740,6 +781,20 @@ class VoiceSession:
             # Else the start takes it along, or it is given once the
             # conversation is open.
             await self._give_context()
+
+    async def set_people(self, others: int | None) -> None:
+        """How many other people are in the conversation's room or channel
+        (None: not known): with one, the voice model hears everything they
+        say; with more, or not known, only what calls it by name. Takes
+        effect at once, also mid-conversation."""
+        self._wake = wakes_on_name(others)
+        if self.ready:
+            await self._give_wake()
+
+    async def _give_wake(self) -> None:
+        """Tells the voice server to hear only what calls the bot by name, or
+        everything (Codex realtime hears everything itself: nothing to
+        tell)."""
 
     async def _give_context(self) -> None:
         """Gives the model the latest context if it has not got it yet (a

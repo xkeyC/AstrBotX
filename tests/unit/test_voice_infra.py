@@ -334,6 +334,8 @@ async def test_the_voice_thread_talks_on_the_chosen_model(engine):
         "name": "Jarvis",
         "aliases": ["Jar"],
         "group": True,
+        # A room of unknown size: only what calls the bot by name.
+        "wake": True,
         "tts_emotion": "happy",
         "tts_emotion_strength": 0.5,
         "tts_stream_text": True,
@@ -845,4 +847,36 @@ async def test_context_set_while_starting_is_given_once_open(engine):
     # The same again: not repeated.
     await t.session.set_context("(Room: Home; here: Alice, Bob)")
     assert len(engine.rt.texts) == 1
+    await t.session.close("done")
+
+
+@pytest.mark.asyncio
+async def test_the_room_size_sets_what_the_voice_server_passes_on(engine):
+    t = SimpleNamespace(media=FakeMedia(), chat=FakeChat(False), closed=[], failures=[])
+    t.session = new_voice_session(
+        key="room",
+        scope_id="test:voice:room",
+        prompt="You are Jarvis, in a room.",
+        options=VoiceOptions(name="Jarvis", aliases=[]),
+        media=t.media,
+        on_closed=t.closed.append,
+        chat=t.chat,
+    )
+    # Three others: only what calls the bot, from the start.
+    await t.session.set_people(3)
+    t.session.launch(t.failures.append)
+    await eventually(lambda: engine.rt.started or t.failures)
+    assert engine.params["config"]["realtime.local_infra.session"]["wake"] is True
+    await engine.pumps["t1"].queue.put({"type": "realtime_conversation_started"})
+    await eventually(lambda: t.session.ready)
+    assert engine.rt.texts == []
+    # One left: everything, at once; the same again is not repeated.
+    await t.session.set_people(1)
+    await t.session.set_people(1)
+    # Not known: only what calls the bot again.
+    await t.session.set_people(None)
+    assert engine.rt.texts == [
+        (json.dumps({"wake": False}), "voice_session"),
+        (json.dumps({"wake": True}), "voice_session"),
+    ]
     await t.session.close("done")

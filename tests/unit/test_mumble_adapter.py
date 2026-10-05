@@ -2,6 +2,7 @@ import asyncio
 import base64
 import ssl
 from collections import deque
+from types import SimpleNamespace
 
 import pytest
 
@@ -269,3 +270,25 @@ def test_departed_speaker_state_is_dropped(adapter):
     adapter._on_user_removed(adapter.client.users[2], {})
     assert list(adapter._preroll[SERVER_SESSION]) == [(0.0, 3, b"b", False)]
     assert "whisper:abc123" not in adapter._preroll
+
+
+@pytest.mark.asyncio
+async def test_the_channel_voice_session_follows_who_is_in_the_channel(adapter):
+    told: list[int | None] = []
+
+    class Session:
+        media = SimpleNamespace(mixer=SimpleNamespace(forget=lambda session: None))
+
+        async def set_people(self, others):
+            told.append(others)
+
+    adapter.voice_sessions[SERVER_SESSION] = Session()
+    users = adapter.client.users
+    # Everyone in the root channel: two others.
+    assert adapter._channel_others() == 2
+    # One leaves for another channel, then the other goes away.
+    users[2].channel_id = 5
+    adapter._on_user_changed(users[2], {"channel_id"})
+    adapter._on_user_removed(users.pop(3), {})
+    await asyncio.sleep(0)
+    assert told == [1, 0]

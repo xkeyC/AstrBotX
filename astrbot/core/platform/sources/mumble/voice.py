@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from astrbot.core.voice.session import VoiceOptions
+from astrbot.core.voice.session import VoiceOptions, group_rule
 
 CHANNEL_PROMPT = """Your name is {name}.
 
-You are listening to a voice chat room where several people talk with each other. Almost everything you hear is people talking to each other, not to you.
+You are listening to a voice chat room where several people talk with each other. Almost everything said there is people talking to each other, not to you.
 
-The one rule that matters most: speak ONLY when the speaker says your name{aliases} to you in that utterance, or is directly continuing an exchange with you from a few seconds ago. In every other case produce no audio and no text at all - complete silence. Do not acknowledge, do not react, do not say "mm", do not comment, do not delegate.
+{rule}
 
 When you are addressed, answer briefly in the speaker's language. Delegate real tasks (anything needing facts, lookups or work) to the backend and tell the speaker the result briefly."""
 
@@ -17,16 +17,14 @@ WHISPER_PROMPT = """Your name is {name}. You are talking privately, one to one, 
 Answer briefly in the speaker's language. Delegate real tasks (anything needing facts, lookups or work) to the backend and tell the speaker the result briefly."""
 
 
-def channel_prompt(options: VoiceOptions) -> str:
-    aliases = [a for a in options.aliases if a and a != options.name]
-    alias_text = (
-        f' ("{options.name}"' + "".join(f', "{a}"' for a in aliases) + ")"
-        if aliases
-        else f' "{options.name}"'
-    )
+def channel_prompt(options: VoiceOptions, *, gated: bool) -> str:
+    """The channel's prompt; ``gated``: the voice server passes on only what
+    calls the bot (``group_rule``)."""
     # The session adds the voice persona (or the platform's extra prompt)
     # and the time.
-    return CHANNEL_PROMPT.format(name=options.name, aliases=alias_text)
+    return CHANNEL_PROMPT.format(
+        name=options.name, rule=group_rule(options, gated=gated)
+    )
 
 
 def whisper_prompt(options: VoiceOptions, speaker: str) -> str:

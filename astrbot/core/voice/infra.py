@@ -320,6 +320,9 @@ class InfraVoiceSession(VoiceSession):
             "aliases": self.options.aliases,
             "group": not self.chat.private,
         }
+        if not self.chat.private:
+            # Only what calls the bot by name (see set_people).
+            session["wake"] = self._wake
         if emotion := str(settings["emotion"]):
             session["tts_emotion"] = emotion
             session["tts_emotion_strength"] = float(settings["emotion_strength"])
@@ -467,6 +470,38 @@ class InfraVoiceSession(VoiceSession):
             text += " It is still busy with an earlier request: this one is next."
         return {"contentItems": [{"type": "inputText", "text": text}], "success": True}
 
+    async def _give_wake(self) -> None:
+        """Tells the voice server whether to pass on only what calls the bot
+        by name (one sender at a time: the newest setting is what it ends
+        with)."""
+        async with self._wake_lock:
+            while (
+                self._wake != self._wake_given
+                and self._engine is not None
+                and self._thread_id is not None
+                and not self._closed
+            ):
+                wake = self._wake
+                try:
+                    await self._engine.rt.realtime_append_text(
+                        self._thread_id, json.dumps({"wake": wake}), "voice_session"
+                    )
+                except Exception as exc:  # noqa: BLE001 - the conversation goes on
+                    logger.warning(
+                        "%s voice %s: wake setting not given: %s",
+                        self.label,
+                        self.key,
+                        exc,
+                    )
+                    return
+                self._wake_given = wake
+                logger.info(
+                    "%s voice %s: %s",
+                    self.label,
+                    self.key,
+                    "only what calls it by name" if wake else "hears everything",
+                )
+
     async def _connect(self) -> None:
         """Has Codex start the conversation on the server; the server has
         loaded its models when it is up."""
@@ -475,6 +510,8 @@ class InfraVoiceSession(VoiceSession):
         self._spawn(self._events(events, started), "events")
         self._realtime_requested = True
         self._context_given = self._context
+        # The thread's session settings carry it.
+        self._wake_given = self._wake
         await engine.rt.realtime_start(
             self._thread_id,
             json.dumps(
@@ -498,6 +535,7 @@ class InfraVoiceSession(VoiceSession):
         self.started_at = time.monotonic()
         self.ready = True
         await self._give_context()
+        await self._give_wake()
         logger.info(
             "%s voice session %s started on the voice server in %.1fs (thread %s)",
             self.label,

@@ -473,13 +473,16 @@ class MumblePlatformAdapter(Platform):
 
     def _start_voice(self, key: str, user: User):
         from astrbot.core.voice.chat import VoiceChat
-        from astrbot.core.voice.session import new_voice_session
+        from astrbot.core.voice.session import new_voice_session, realtime_voice_config
 
         from .audio import MumbleMedia
         from .voice import channel_prompt, whisper_prompt
 
         if key == SERVER_SESSION:
-            prompt = channel_prompt(self.voice_options)
+            # The voice server passes on only what calls the bot (or all, to
+            # one other person): local_infra.
+            gated = realtime_voice_config()["backend"] == "local_infra"
+            prompt = channel_prompt(self.voice_options, gated=gated)
 
             def send(frame: bytes, terminator: bool) -> None:
                 self._send_voice(frame, AudioTarget.NORMAL, terminator)
@@ -526,6 +529,8 @@ class MumblePlatformAdapter(Platform):
             ),
         )
         self.voice_sessions[key] = session
+        if key == SERVER_SESSION:
+            self._spawn(session.set_people(self._channel_others()))
 
         def failed(exc: Exception) -> None:
             logger.error("Mumble voice session %s failed to start: %s", key, exc)
@@ -567,8 +572,28 @@ class MumblePlatformAdapter(Platform):
         if session.key.startswith("whisper:"):
             self.whisper_targets.pop(session.key.removeprefix("whisper:"), None)
 
+    def _channel_others(self) -> int | None:
+        """How many others are in the bot's channel (None: not known yet)."""
+        me = self.client.me
+        if me is None:
+            return None
+        return sum(
+            1
+            for user in self.client.users.values()
+            if user.channel_id == me.channel_id and user.session != me.session
+        )
+
+    def _people_changed(self) -> None:
+        """Someone came, went or moved (the bot too): the channel's voice
+        session hears accordingly (everything with one other person, else
+        only what calls the bot by name)."""
+        session = self.voice_sessions.get(SERVER_SESSION)
+        if session is not None:
+            self._spawn(session.set_people(self._channel_others()))
+
     def _on_user_removed(self, user: User, _message: dict) -> None:
         """Drops a departed speaker's audio state; their session id is reused."""
+        self._people_changed()
         self._detector.forget(user.session)
         self._preroll.pop(f"whisper:{user_key(user)}", None)
         channel = self._preroll.get(SERVER_SESSION)
@@ -585,6 +610,10 @@ class MumblePlatformAdapter(Platform):
             self._spawn(whisper.close("whisper partner left"))
 
     def _on_user_changed(self, user: User, changed: set[str]) -> None:
+        # Someone new (their name comes first), or someone (the bot too)
+        # changed channels.
+        if changed & {"channel_id", "name"}:
+            self._people_changed()
         # A whisper partner who reconnected has a new session: re-aim the target.
         target = self.whisper_targets.get(user_key(user))
         if target is not None and "name" in changed and self.client.connected:
