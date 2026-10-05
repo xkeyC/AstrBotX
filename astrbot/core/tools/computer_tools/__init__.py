@@ -1,3 +1,4 @@
+from .apply_patch import ApplyPatchTool
 from .codex_exec import ExecCommandTool, WriteStdinTool
 from .cua import (
     CuaKeyboardTypeTool,
@@ -32,6 +33,7 @@ from .shipyard_neo import (
 from .util import check_admin_permission, normalize_umo_for_workspace
 
 __all__ = [
+    "ApplyPatchTool",
     "AnnotateExecutionTool",
     "BrowserBatchExecTool",
     "BrowserExecTool",

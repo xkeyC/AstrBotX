@@ -102,6 +102,7 @@
     "selectAllSkills": "选择全部技能",
     "skillCount": "已选 {selected}/{total} 个技能",
     "pluginSource": "插件",
+    "builtinSource": "内置",
     "localSource": "本地",
     "presetSource": "预置",
     "localAndSandboxSource": "本地 + 沙箱",

@@ -24,8 +24,13 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.computer.computer_client import get_booter
 
+from ..registry import builtin_tool
 from .fs import _is_restricted_env, _normalize_rw_path
 from .util import is_local_runtime, workspace_root_for_context
+
+_COMPUTER_RUNTIME_TOOL_CONFIG = {
+    "provider_settings.computer_use_runtime": ("local", "sandbox"),
+}
 
 BEGIN = "*** Begin Patch"
 END = "*** End Patch"
@@ -161,6 +166,7 @@ def apply_hunks(content: str, hunks: list[Hunk]) -> str:
     return out + "\n" if trailing_newline or not content else out
 
 
+@builtin_tool(config=_COMPUTER_RUNTIME_TOOL_CONFIG)
 @dataclass
 class ApplyPatchTool(FunctionTool):
     name: str = "apply_patch"

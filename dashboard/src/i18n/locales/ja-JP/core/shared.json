@@ -102,6 +102,7 @@
     "selectAllSkills": "すべてのスキルを選択",
     "skillCount": "{selected}/{total} 件のスキルを選択中",
     "pluginSource": "プラグイン",
+    "builtinSource": "組み込み",
     "localSource": "ローカル",
     "presetSource": "プリセット",
     "localAndSandboxSource": "ローカル + サンドボックス",

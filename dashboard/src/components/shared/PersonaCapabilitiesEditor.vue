@@ -62,8 +62,9 @@ const selectionDialog = ref({
   selectedNames: [],
 });
 
+const TOOL_ORIGINS = ["builtin", "mcp", "plugin"];
 const selectableTools = computed(() =>
-  props.availableTools.filter((tool) => tool.origin !== "builtin"),
+  props.availableTools.filter((tool) => TOOL_ORIGINS.includes(tool.origin)),
 );
 const selectableToolNames = computed(() =>
   selectableTools.value
@@ -87,9 +88,6 @@ function isCapabilitySelected(field, name) {
 const toolGroups = computed(() => {
   const groups = new Map();
   for (const tool of selectableTools.value) {
-    if (tool.origin !== "mcp" && tool.origin !== "plugin") {
-      continue;
-    }
     const sourceId =
       tool.origin_name || tm("personaQuickPreview.unknownSource");
     const sourceName = tool.origin_display_name || sourceId;
@@ -113,8 +111,14 @@ const toolGroups = computed(() => {
     return {
       ...group,
       badge:
-        group.origin === "mcp" ? "MCP" : tm("personaQuickPreview.pluginSource"),
-      badgeTone: group.origin === "mcp" ? "mcp" : "plugin",
+        group.origin === "mcp"
+          ? "MCP"
+          : tm(
+              group.origin === "builtin"
+                ? "personaQuickPreview.builtinSource"
+                : "personaQuickPreview.pluginSource",
+            ),
+      badgeTone: group.origin,
       meta: tm("personaQuickPreview.toolCount", {
         selected: selectedCount,
         total: activeTools.length,

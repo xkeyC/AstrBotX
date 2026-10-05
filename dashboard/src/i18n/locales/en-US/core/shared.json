@@ -102,6 +102,7 @@
     "selectAllSkills": "Select all skills",
     "skillCount": "{selected}/{total} skills selected",
     "pluginSource": "Plugin",
+    "builtinSource": "Built-in",
     "localSource": "Local",
     "presetSource": "Preset",
     "localAndSandboxSource": "Local + Sandbox",

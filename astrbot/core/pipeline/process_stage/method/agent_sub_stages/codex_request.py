@@ -15,6 +15,7 @@ from astrbot.core import logger
 from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.astr_main_agent import (
+    PERSONA_ALLOWED_TOOLS_EXTRA_KEY,
     MainAgentBuildConfig,
     _apply_kb,
     _apply_llm_safety_mode,
@@ -154,6 +155,16 @@ async def prepare_codex_request(
         req.func_tool.remove_tool("astrbot_shell_session")
         req.func_tool.add_tool(ExecCommandTool())
         req.func_tool.add_tool(WriteStdinTool())
+        # A persona that lists the shell or edit tools keeps them under their
+        # Codex names, so its tool list means the same with either runner.
+        allowed = event.get_extra(PERSONA_ALLOWED_TOOLS_EXTRA_KEY)
+        if allowed is not None:
+            allowed = set(allowed)
+            if allowed & {"astrbot_execute_shell", "astrbot_shell_session"}:
+                allowed |= {"exec_command", "write_stdin"}
+            if allowed & {"astrbot_file_edit_tool", "astrbot_file_write_tool"}:
+                allowed.add("apply_patch")
+            event.set_extra(PERSONA_ALLOWED_TOOLS_EXTRA_KEY, allowed)
     if config.add_cron_tools:
         _proactive_cron_job_tools(req, plugin_context)
 
@@ -170,14 +181,15 @@ async def prepare_codex_request(
     ):
         req.func_tool.add_tool(tmgr.get_builtin_tool(GetGroupMessageHistoryTool))
 
+    _filter_tools_by_persona_scope(event, req)
     # One reader for every runtime: it opens the host copy, or the sandbox copy
     # in shipyard mode, so the model never has to locate skill files itself.
+    # Added after the persona's tool list is applied: the persona's skill list
+    # already decides which skills this request carries.
     if event.get_extra("_codex_skills"):
         from astrbot.core.agent.runners.codex.skills import ReadSkillTool
 
         req.func_tool.add_tool(ReadSkillTool())
-
-    _filter_tools_by_persona_scope(event, req)
     if not policy.is_default:
         # Name the execution tools this request actually carries, so a sender
         # barred from the host does not conclude that nothing can run.

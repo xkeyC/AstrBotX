@@ -103,6 +103,7 @@
         "selectAllSkills": "Выбрать все навыки",
         "skillCount": "Выбрано навыков: {selected}/{total}",
         "pluginSource": "Плагин",
+        "builtinSource": "Встроенный",
         "localSource": "Локальный",
         "presetSource": "Предустановленный",
         "localAndSandboxSource": "Локальный + Sandbox",
