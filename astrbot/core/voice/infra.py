@@ -510,8 +510,11 @@ class InfraVoiceSession(VoiceSession):
         self._spawn(self._events(events, started), "events")
         self._realtime_requested = True
         self._context_given = self._context
-        # The thread's session settings carry it.
-        self._wake_given = self._wake
+        # A group's setting is given again once the server is up: the
+        # thread's session settings may not be it (people came or went
+        # while the session started; a thread still loaded keeps the
+        # settings it was loaded with). One to one there is none.
+        self._wake_given = self._wake if self.chat.private else None
         await engine.rt.realtime_start(
             self._thread_id,
             json.dumps(

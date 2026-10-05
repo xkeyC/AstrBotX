@@ -213,6 +213,11 @@ def engine(monkeypatch, voice_db):
     return engine
 
 
+def told(engine, role: str) -> list[str]:
+    """The texts given to the realtime conversation in ``role``."""
+    return [text for text, r in engine.rt.texts if r == role]
+
+
 async def eventually(check) -> None:
     for _ in range(200):
         if check():
@@ -292,10 +297,10 @@ async def test_the_platforms_context_goes_with_the_start_then_as_context(engine)
     )
     await engine.pumps["t1"].queue.put({"type": "realtime_conversation_started"})
     await eventually(lambda: t.session.ready)
-    assert engine.rt.texts == []
+    assert told(engine, "context") == []
     # Later: as context, for the next input.
     await t.session.set_context("(Room: Home; here: Alice, Bob)")
-    assert engine.rt.texts == [("(Room: Home; here: Alice, Bob)", "context")]
+    assert told(engine, "context") == ["(Room: Home; here: Alice, Bob)"]
     await t.session.close("done")
 
 
@@ -842,11 +847,11 @@ async def test_context_set_while_starting_is_given_once_open(engine):
     )
     assert engine.rt.texts == []
     await engine.pumps["t1"].queue.put({"type": "realtime_conversation_started"})
-    await eventually(lambda: engine.rt.texts)
-    assert engine.rt.texts == [("(Room: Home; here: Alice, Bob)", "context")]
+    await eventually(lambda: told(engine, "context"))
+    assert told(engine, "context") == ["(Room: Home; here: Alice, Bob)"]
     # The same again: not repeated.
     await t.session.set_context("(Room: Home; here: Alice, Bob)")
-    assert len(engine.rt.texts) == 1
+    assert len(told(engine, "context")) == 1
     await t.session.close("done")
 
 
@@ -869,14 +874,40 @@ async def test_the_room_size_sets_what_the_voice_server_passes_on(engine):
     assert engine.params["config"]["realtime.local_infra.session"]["wake"] is True
     await engine.pumps["t1"].queue.put({"type": "realtime_conversation_started"})
     await eventually(lambda: t.session.ready)
-    assert engine.rt.texts == []
+    # Given again once up (the thread's settings may be older).
+    assert engine.rt.texts == [(json.dumps({"wake": True}), "voice_session")]
     # One left: everything, at once; the same again is not repeated.
     await t.session.set_people(1)
     await t.session.set_people(1)
     # Not known: only what calls the bot again.
     await t.session.set_people(None)
     assert engine.rt.texts == [
+        (json.dumps({"wake": True}), "voice_session"),
         (json.dumps({"wake": False}), "voice_session"),
         (json.dumps({"wake": True}), "voice_session"),
     ]
+    await t.session.close("done")
+
+
+@pytest.mark.asyncio
+async def test_people_changing_while_it_starts_reach_the_voice_server(engine):
+    t = SimpleNamespace(media=FakeMedia(), chat=FakeChat(False), closed=[], failures=[])
+    t.session = new_voice_session(
+        key="room",
+        scope_id="test:voice:room",
+        prompt="You are Jarvis, in a room.",
+        options=VoiceOptions(name="Jarvis", aliases=[]),
+        media=t.media,
+        on_closed=t.closed.append,
+        chat=t.chat,
+    )
+    await t.session.set_people(3)
+    t.session.launch(t.failures.append)
+    await eventually(lambda: engine.rt.started or t.failures)
+    assert engine.params["config"]["realtime.local_infra.session"]["wake"] is True
+    # Two left before the server was up.
+    await t.session.set_people(1)
+    await engine.pumps["t1"].queue.put({"type": "realtime_conversation_started"})
+    await eventually(lambda: engine.rt.texts)
+    assert engine.rt.texts == [(json.dumps({"wake": False}), "voice_session")]
     await t.session.close("done")
