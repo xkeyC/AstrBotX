@@ -109,6 +109,8 @@
     "extras": "ヘッダー・圧縮・モデル",
     "compaction": "圧縮方式",
     "compactionHint": "長い履歴をどこで圧縮するか。リモートには /responses/compact（OpenAI）が必要です。",
+    "filesApi": "画像を Files API で送る",
+    "filesApiHint": "ツールやメッセージの画像をプロバイダーの Files API（POST /files、DeepSeek・OpenAI 形式）に一度アップロードし、以降のリクエストは file_id で参照します。アップロードは 1 日で失効し、その前に再アップロードされます。",
     "extraBody": "追加リクエストボディ（JSON）",
     "extraBodyHint": "Chat Completions の場合のみ有効：各リクエストボディの最上位にマージされます。プロバイダー固有のフィールドを指定します（例 {\"thinking\": {\"type\": \"disabled\"}}）。null を指定すると Codex が送るフィールドを削除します（例 {\"reasoning_effort\": null}）。",
     "compaction_auto": "自動",

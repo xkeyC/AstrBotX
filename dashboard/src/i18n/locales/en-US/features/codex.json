@@ -109,6 +109,8 @@
     "extras": "Headers, compaction and models",
     "compaction": "Compaction",
     "compactionHint": "Where long histories are compacted. Remote needs a /responses/compact endpoint (OpenAI).",
+    "filesApi": "Images via Files API",
+    "filesApiHint": "Images from tools or messages are uploaded once to the provider's Files API (POST /files, DeepSeek's and OpenAI's shape) and later requests refer to them by file_id instead of sending them again; uploads expire after a day and are renewed before.",
     "extraBody": "Extra request body (JSON)",
     "extraBodyHint": "Chat Completions only: merged over each request body's top level, for the provider's own fields (e.g. {\"thinking\": {\"type\": \"disabled\"}}); a null value removes a field Codex sends (e.g. {\"reasoning_effort\": null}).",
     "compaction_auto": "Automatic",

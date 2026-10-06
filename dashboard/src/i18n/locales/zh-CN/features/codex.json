@@ -109,6 +109,8 @@
     "extras": "请求头、压缩与模型",
     "compaction": "压缩方式",
     "compactionHint": "长历史在哪里压缩。远程需要提供商支持 /responses/compact（OpenAI）。",
+    "filesApi": "图片走 Files API",
+    "filesApiHint": "工具返回或消息里的图片上传到提供商的 Files API（POST /files，DeepSeek、OpenAI 的格式）一次，之后的请求只按 file_id 引用，不再每次重发整张图；上传的文件 1 天后由提供商删除，到期前自动重传。",
     "extraBody": "额外请求体（JSON）",
     "extraBodyHint": "仅接口协议为 Chat Completions 时生效：合并到每个请求体的顶层，填写提供商特有的字段（如 {\"thinking\": {\"type\": \"disabled\"}}）；值为 null 表示去掉 Codex 默认发送的字段（如 {\"reasoning_effort\": null}）。",
     "compaction_auto": "自动",

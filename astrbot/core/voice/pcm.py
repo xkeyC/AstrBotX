@@ -28,8 +28,15 @@ FRAME_BYTES = FRAME_SAMPLES * 2
 JITTER_FRAMES = 2  # 40 ms
 # Inbound audio beyond this is dropped, oldest first. It is large so that
 # what is said while the session is still connecting is kept; it drains
-# during the next pause.
+# during the pauses (see CATCH_UP_FRAMES).
 MAX_BACKLOG_BYTES = SAMPLE_RATE * 2 * 10
+# Inbound audio is served at real-time pace, so a backlog never drains by
+# itself when the platform sends silence all along (a game's audio): each
+# pause beyond its first KEEP_SILENT_FRAMES is dropped while more than
+# CATCH_UP_FRAMES are queued. The kept second still ends what was said
+# before it (the far side's VAD waits ~0.6 s), so utterances stay apart.
+CATCH_UP_FRAMES = 10  # 200 ms
+KEEP_SILENT_FRAMES = 50  # 1 s
 FRAME_SECONDS = FRAME_SAMPLES / SAMPLE_RATE
 # With a playout buffer, a stretch of speech starts once this much is queued
 # or has been waiting this long: WebRTC hands over a realtime model's audio
@@ -40,6 +47,12 @@ PREBUFFER_FRAMES = 10  # 200 ms
 LEAD_FRAMES = 3  # 60 ms
 # Chunks quieter than this (int16 RMS) are silence (as in Mumble's outbound).
 SILENCE_RMS = 120
+
+
+def is_silent(pcm: bytes | bytearray) -> bool:
+    """Whether 16-bit PCM is quieter than SILENCE_RMS."""
+    samples = np.frombuffer(bytes(pcm), dtype=np.int16).astype(np.float32)
+    return not samples.size or float(np.sqrt(np.mean(samples * samples))) < SILENCE_RMS
 
 
 class FrameSource(Protocol):
@@ -128,6 +141,8 @@ class PcmMedia:
         # or the queue runs dry at once and playback stutters.
         self._lead = min(LEAD_FRAMES, self._prebuffer - 1)
         self._buffer = bytearray()
+        # Silent frames served in a row (inbound).
+        self._silent_run = 0
         self._playing = False
         # Until the model listens, inbound audio is kept, not handed out.
         self.holding = True
@@ -153,8 +168,15 @@ class PcmMedia:
         elif len(self._buffer) < FRAME_BYTES:
             self._playing = False  # ran dry: buffer up again
             return None
+        while (
+            self._silent_run >= KEEP_SILENT_FRAMES
+            and len(self._buffer) > (CATCH_UP_FRAMES + 1) * FRAME_BYTES
+            and is_silent(self._buffer[:FRAME_BYTES])
+        ):
+            del self._buffer[:FRAME_BYTES]  # a backlog drains in the pauses
         frame = bytes(self._buffer[:FRAME_BYTES])
         del self._buffer[:FRAME_BYTES]
+        self._silent_run = self._silent_run + 1 if is_silent(frame) else 0
         return frame
 
     async def play(self, track: MediaStreamTrack) -> None:
@@ -180,14 +202,12 @@ class PcmMedia:
                     if self._queue is None:
                         self._send(chunk)
                         continue
-                    if self._trim_silence and len(self._queue) > max(
-                        self._prebuffer, PREBUFFER_FRAMES
+                    if (
+                        self._trim_silence
+                        and len(self._queue) > max(self._prebuffer, PREBUFFER_FRAMES)
+                        and is_silent(chunk)
                     ):
-                        samples = np.frombuffer(chunk, dtype=np.int16).astype(
-                            np.float32
-                        )
-                        if float(np.sqrt(np.mean(samples * samples))) < SILENCE_RMS:
-                            continue  # a backlog drains in the pauses
+                        continue  # a backlog drains in the pauses
                     self._queue.append(chunk)  # oldest dropped when full
             ended.set()
             if pacer is not None:

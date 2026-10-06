@@ -198,11 +198,15 @@ def _without_nulls(value: T.Any) -> T.Any:
     return value
 
 
+# How long a provider keeps the images uploaded to its Files API.
+FILES_API_EXPIRES_SECONDS = 86400
+
+
 def model_provider_overrides(providers: T.Any) -> JsonObject:
     """Map WebUI-managed providers to Codex overrides: `model_providers.<id>`
     (endpoint, key, extra request headers) and `model_provider_options.<id>`
-    (compaction mode, wire, extra chat request body, metadata of the
-    provider's models). The chat wire is a Codex fork option: the provider's
+    (compaction mode, wire, extra chat request body, images through the Files
+    API, metadata of the provider's models). The chat wire is a Codex fork option: the provider's
     own `wire_api` stays Responses (upstream rejects "chat")."""
     out: JsonObject = {}
     for p in providers if isinstance(providers, list) else []:
@@ -242,6 +246,12 @@ def model_provider_overrides(providers: T.Any) -> JsonObject:
             }
         ):
             out[f"{prefix}.http_headers"] = headers
+        # Images uploaded once to the provider's Files API (DeepSeek's,
+        # OpenAI's), not sent again inline with every request.
+        if p.get("files_api") is True:
+            out[f"model_provider_options.{pid}.files_api"] = {
+                "expires_seconds": FILES_API_EXPIRES_SECONDS
+            }
         compaction = str(p.get("compaction") or "auto")
         if compaction in ("local", "remote"):
             out[f"model_provider_options.{pid}.compaction"] = compaction

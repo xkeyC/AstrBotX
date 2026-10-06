@@ -34,6 +34,31 @@ def test_inbound_backlog_is_bounded_to_whole_samples(monkeypatch):
     assert media._buffer[:2] == b"\x01\x02"  # still sample aligned
 
 
+def test_an_inbound_backlog_drains_in_the_pauses():
+    loud = (np.full(pcm.FRAME_SAMPLES, 3000, dtype=np.int16)).tobytes()
+    quiet = bytes(FRAME_BYTES)
+    media = PcmMedia(lambda chunk: None)
+    # 5 s held while connecting: speech, a 3 s pause, speech; the platform
+    # goes on sending silence meanwhile.
+    for frame in [loud] * 50 + [quiet] * 150 + [loud] * 50:
+        media.feed(frame)
+    media.start()
+    served = [media.pull() for _ in range(170)]
+    assert served[:50] == [loud] * 50
+    # The pause keeps its first second (the far side's VAD ends the
+    # utterance), the rest is dropped while there is a backlog.
+    assert served[50 : 50 + pcm.KEEP_SILENT_FRAMES] == [quiet] * pcm.KEEP_SILENT_FRAMES
+    assert served[50 + pcm.KEEP_SILENT_FRAMES : 150] == [loud] * 50
+    assert all(frame is None for frame in served[150:])  # caught up
+    # Fed as fast as it is served (no backlog), a long pause passes whole.
+    served = 0
+    for _ in range(120):
+        media.feed(quiet)
+        served += media.pull() == quiet
+    assert served == 119  # the first waits for the jitter buffer
+    assert len(media._buffer) == FRAME_BYTES
+
+
 def test_stop_drops_inbound_and_outbound():
     sent = []
     media = PcmMedia(sent.append)

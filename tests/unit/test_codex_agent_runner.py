@@ -284,6 +284,7 @@ def test_a_chat_provider_goes_over_the_chat_wire(tmp_path):
                 },
                 # An extra body without the chat wire says nothing.
                 {"id": "r", "base_url": "https://r/v1", "extra_body": {"x": 1}},
+                {"id": "ds", "base_url": "https://api.deepseek.com", "files_api": True},
             ],
         }
     )
@@ -300,6 +301,8 @@ def test_a_chat_provider_goes_over_the_chat_wire(tmp_path):
         "model_provider_options.r.omit_turn_metadata"
     ]
     assert "model_providers.plain.http_headers" not in cfg
+    assert cfg["model_provider_options.ds.files_api"] == {"expires_seconds": 86400}
+    assert "model_provider_options.go.files_api" not in cfg
 
 
 def test_native_exec_approvals_follow_permission_rules(tmp_path):

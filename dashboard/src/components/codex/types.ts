@@ -21,6 +21,8 @@ export type ProviderExtras = {
   compaction: string
   // Chat wire: merged over each request body (a JSON object, as text).
   extra_body_json: string
+  // Images uploaded once to the provider's Files API.
+  files_api: boolean
   models: ModelRow[]
 }
 
@@ -116,6 +118,7 @@ export function extrasFromConfig(p: any): ProviderExtras {
       p?.extra_body && typeof p.extra_body === 'object' && Object.keys(p.extra_body).length
         ? JSON.stringify(p.extra_body, null, 2)
         : '',
+    files_api: p?.files_api === true,
     models: models
       .filter((m: any) => m && typeof m === 'object')
       .map((m: any) => ({
@@ -141,6 +144,7 @@ export function extrasPayload(e: ProviderExtras) {
     compaction: e.compaction || 'auto',
     // Text still being typed stays text (saving checks it, extrasProblem).
     extra_body: parseExtraBody(e.extra_body_json),
+    files_api: e.files_api,
     models: e.models.map((m) => ({
       slug: m.slug.trim(),
       context_window: Number(m.context_window) || 0,

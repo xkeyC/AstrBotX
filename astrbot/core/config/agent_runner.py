@@ -65,6 +65,7 @@ AGENT_RUNNER_CONFIG_DEFAULTS: dict[str, dict[str, Any]] = {
         # Custom endpoints: [{id, name, base_url, api_key, wire_api:
         # responses|chat, extra_body: {...} (chat: merged over each request
         # body), headers: {name: value}, compaction: auto|local|remote,
+        # files_api: true (images uploaded once to the provider's Files API),
         # models: [{slug, context_window, auto_compact_token_limit,
         # reasoning_efforts: [...], default_reasoning_effort, image_input
         # (true/false; unset: Codex's default), metadata_json}]}] (see

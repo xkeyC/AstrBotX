@@ -17,6 +17,15 @@
             density="comfortable"
             class="compaction-select"
           />
+          <v-switch
+            v-model="extras.files_api"
+            :label="tm('providers.filesApi')"
+            :hint="tm('providers.filesApiHint')"
+            persistent-hint
+            color="primary"
+            density="comfortable"
+            inset
+          />
         </div>
 
         <div class="extras-block">
@@ -184,6 +193,7 @@ const compactionItems = computed(() =>
 const summary = computed(() => {
   const parts: string[] = []
   if (extras.value.compaction !== 'auto') parts.push(tm(`providers.compaction_${extras.value.compaction}`))
+  if (extras.value.files_api) parts.push(tm('providers.filesApi'))
   if (extras.value.headers.length) parts.push(tm('providers.headerCount', { n: String(extras.value.headers.length) }))
   if (extras.value.models.length) parts.push(tm('providers.modelCount', { n: String(extras.value.models.length) }))
   return parts.join(' · ')
