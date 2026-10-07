@@ -890,6 +890,38 @@ async def test_the_room_size_sets_what_the_voice_server_passes_on(engine):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "people", "wake"),
+    [("always", [1, 0, None], [True, True, True]), ("off", [3, None, 1], [False, False, False])],
+)
+async def test_wake_mode_overrides_the_headcount(engine, mode, people, wake):
+    from astrbot.core.voice.session import wakes_on_name
+
+    assert [wakes_on_name(n, mode) for n in people] == wake
+    t = SimpleNamespace(media=FakeMedia(), chat=FakeChat(False), closed=[], failures=[])
+    t.session = new_voice_session(
+        key="room",
+        scope_id="test:voice:room",
+        prompt="You are Jarvis, in a room.",
+        options=VoiceOptions(name="Jarvis", aliases=[], wake_mode=mode),
+        media=t.media,
+        on_closed=t.closed.append,
+        chat=t.chat,
+    )
+    await t.session.set_people(people[0])
+    t.session.launch(t.failures.append)
+    await eventually(lambda: engine.rt.started or t.failures)
+    assert engine.params["config"]["realtime.local_infra.session"]["wake"] is wake[0]
+    await engine.pumps["t1"].queue.put({"type": "realtime_conversation_started"})
+    await eventually(lambda: t.session.ready)
+    for n in people[1:]:
+        await t.session.set_people(n)
+    # The same setting all along: given once, once the server is up.
+    assert engine.rt.texts == [(json.dumps({"wake": wake[0]}), "voice_session")]
+    await t.session.close("done")
+
+
+@pytest.mark.asyncio
 async def test_people_changing_while_it_starts_reach_the_voice_server(engine):
     t = SimpleNamespace(media=FakeMedia(), chat=FakeChat(False), closed=[], failures=[])
     t.session = new_voice_session(

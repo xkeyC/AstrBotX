@@ -171,10 +171,20 @@ class VoiceMedia(Protocol):
         """Drops the model's audio not played yet (its speech was cut)."""
 
 
-def wakes_on_name(others: int | None) -> bool:
+WAKE_MODES = ("auto", "always", "off")
+
+
+def wakes_on_name(others: int | None, mode: str = "auto") -> bool:
     """Whether a group conversation with ``others`` other people (None: not
     known) hears only what calls the bot by name (with what was said just
-    before it); with one other person (or none) it hears everything."""
+    before it). ``mode`` (``VoiceOptions.wake_mode``): ``auto``, with one
+    other person (or none) it hears everything, with more (or not known)
+    only that; ``always``, only that whoever is there; ``off``, everything
+    (the voice model tells for itself what is for it)."""
+    if mode == "off":
+        return False
+    if mode == "always":
+        return True
     return others is None or others > 1
 
 
@@ -218,6 +228,10 @@ class VoiceOptions:
     # no packet loss on lossy paths, at the cost of latency spikes (which a
     # playout buffer absorbs). With a proxy, media always takes TCP.
     media_tcp: bool = False
+    # When a group conversation hears only what calls the bot by name
+    # (``wakes_on_name``): ``auto`` (by how many people are there),
+    # ``always`` or ``off``.
+    wake_mode: str = "auto"
 
 
 @dataclass
@@ -364,7 +378,7 @@ class VoiceSession:
         self._context_lock = asyncio.Lock()
         # Hear only what calls the bot by name (``set_people``), and what
         # the voice server was last told.
-        self._wake = wakes_on_name(None)
+        self._wake = wakes_on_name(None, options.wake_mode)
         self._wake_given: bool | None = None
         self._wake_lock = asyncio.Lock()
         # The transcript and stats of the thread (see record.py).
@@ -785,9 +799,10 @@ class VoiceSession:
     async def set_people(self, others: int | None) -> None:
         """How many other people are in the conversation's room or channel
         (None: not known): with one, the voice model hears everything they
-        say; with more, or not known, only what calls it by name. Takes
-        effect at once, also mid-conversation."""
-        self._wake = wakes_on_name(others)
+        say; with more, or not known, only what calls it by name (as
+        ``VoiceOptions.wake_mode`` has it). Takes effect at once, also
+        mid-conversation."""
+        self._wake = wakes_on_name(others, self.options.wake_mode)
         if self.ready:
             await self._give_wake()
 
