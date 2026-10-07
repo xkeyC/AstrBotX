@@ -154,7 +154,7 @@ installer at the branch and make sure a Rust toolchain is present, because the C
 binding builds from source:
 
 ```bash
-pip install "astrbot @ git+https://github.com/xkeyC/AstrBot@codex_agent_runtime"
+pip install "astrbot @ git+https://github.com/xkeyC/AstrBotX@codex_agent_runtime"
 ```
 
 The first install compiles the Rust workspace and downloads a prebuilt V8 for the code-mode

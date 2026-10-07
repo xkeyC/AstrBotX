@@ -129,7 +129,7 @@ Codex 的原生记忆按会话隔离。每个聊天有自己的私有库；只�
 工具链——Codex 绑定是从源码构建的：
 
 ```bash
-pip install "astrbot @ git+https://github.com/xkeyC/AstrBot@codex_agent_runtime"
+pip install "astrbot @ git+https://github.com/xkeyC/AstrBotX@codex_agent_runtime"
 ```
 
 首次安装会编译整个 Rust 工作区，并为 code-mode 宿主下载预编译的 V8，耗时较长；之后安装
