@@ -13,8 +13,9 @@ given to the chat's open voice conversation, if any (``announce``).
 
 Identity: in a private conversation (a call, a whisper) the turn runs as the
 person talking, with their own permissions. In a group (a voice channel) the
-speakers cannot be told apart, so it runs as one fixed voice user, locked to
-the member role.
+speakers cannot be told apart for sure (a platform may guess who spoke: the
+request names the guess), so it runs as one fixed voice user, locked to the
+member role.
 """
 
 from __future__ import annotations
@@ -107,11 +108,15 @@ class VoiceChat:
         return _QUEUED_TURNS.get(self.umo, 0) > 0 or self._open > 0
 
     def request(
-        self, body: str, on_answer: Callable[[str | None], Awaitable[Any]]
+        self,
+        body: str,
+        on_answer: Callable[[str | None], Awaitable[Any]],
+        speaker: str | None = None,
     ) -> bool:
         """Runs ``body`` as a turn of the chat, after this conversation's
         earlier requests, and hands the answer to ``on_answer``. The request
         outlives the voice session (a hang-up does not cancel it).
+        ``speaker``: who the platform guesses asked (see ``ask``).
 
         Returns:
             Whether it has to wait (see ``busy``), decided before it queues.
@@ -123,7 +128,7 @@ class VoiceChat:
             answer = None
             try:
                 async with self._order:
-                    answer = await self.ask(body)
+                    answer = await self.ask(body, speaker)
             except Exception as exc:  # noqa: BLE001 - answered as failed
                 logger.warning("Voice: request to %s failed: %s", self.umo, exc)
             finally:
@@ -257,11 +262,14 @@ class VoiceChat:
             return ""
         return str((persona or {}).get("voice_prompt") or "").strip()
 
-    async def ask(self, body: str) -> str | None:
+    async def ask(self, body: str, speaker: str | None = None) -> str | None:
         """Runs ``body`` as a turn of the chat and returns the answer.
 
         Args:
             body: The request (see TASK_BODY).
+            speaker: In a group, who the platform guesses said it (from
+                where the voice came from, say): named in the request for
+                the agent, nothing more.
 
         Returns:
             The answer (empty when the turn ended without one), or None when
@@ -277,6 +285,10 @@ class VoiceChat:
             logger.warning("Voice: no core context, a request is not answered")
             return None
         sender_name = self.sender_name if self.private else VOICE_SENDER_NAME
+        if speaker and not self.private:
+            # Only a guess, which can be wrong: the turn still runs as the
+            # voice user, a member. A guessed name grants nothing.
+            sender_name = f"{sender_name}, maybe {speaker} (a guess)"
         text = body
         while "</voice_request>" in text:
             text = text.replace("</voice_request>", "")

@@ -333,6 +333,7 @@ class VoiceSession:
         label: str = "voice",
         thread_key: str = VOICE_THREAD_KEY,
         tools: list[VoiceTool] | None = None,
+        on_wake: Callable[..., Awaitable[None] | None] | None = None,
     ) -> None:
         """
         Args:
@@ -348,8 +349,18 @@ class VoiceSession:
             thread_key: Storage key of the persisted voice thread.
             tools: The platform's quick actions for the voice model (see
                 ``VoiceTool``); ignored by Codex realtime.
+            on_wake: Called (or awaited) with ``source=`` when the bot is
+                called by name, at most once every few seconds: ``"wake"``
+                as soon as the voice server hears a wake word,
+                ``"transcript"`` when only the utterance's transcript says
+                so (later: it comes once the utterance ended). If it takes
+                ``speaker=`` (or ``**kwargs``), that is who the server
+                guesses said it (the transcript's speaker; None on a wake
+                word, heard before the transcript). E.g. to turn toward the
+                speaker. Only the ``local_infra`` backend calls it.
         """
         self.tools = list(tools or [])
+        self._on_wake = on_wake
         self.key = key
         self.scope_id = scope_id
         self.prompt = prompt
@@ -496,6 +507,10 @@ class VoiceSession:
         workspace = Path(get_astrbot_data_path()) / "voice"
         workspace.mkdir(parents=True, exist_ok=True)
         params = {"cwd": str(workspace), **self._thread_params()}
+        # A resumed thread takes these params' instructions and tools (Codex
+        # prefers the given base_instructions over the rollout's), so a
+        # changed prompt reaches it with the next open; the rollout keeps
+        # only the first session's instructions, so it is no evidence.
         # Opening and unloading this key's thread are serialised: a session
         # closed while its open was still running unloads the thread before
         # anyone else may open it, so it can never unload a newer session's
@@ -751,7 +766,9 @@ class VoiceSession:
         if self._ask(TASK_BODY.format(heard=heard or task, task=task), tell):
             self._spawn(self._speak(BUSY_SPEECH), "busy")
 
-    def _ask(self, body: str, tell=None, keep: bool = True) -> bool:
+    def _ask(
+        self, body: str, tell=None, keep: bool = True, speaker: str | None = None
+    ) -> bool:
         """Hands ``body`` to the paired chat (in order, outliving this
         session); the answer goes to ``tell`` (default ``_tell``).
 
@@ -760,6 +777,8 @@ class VoiceSession:
             tell: Gets the answer while this conversation is on.
             keep: Deliver the answer elsewhere if the conversation ended
                 (not for words only meant for it, like an opening).
+            speaker: Who the platform guesses asked, in a group (see
+                ``VoiceChat.ask``).
 
         Returns:
             Whether it waits behind other work.
@@ -777,7 +796,7 @@ class VoiceSession:
                 return
             await tell(answer)
 
-        return self.chat.request(body, answered)
+        return self.chat.request(body, answered, speaker=speaker)
 
     async def _tell(self, answer: str | None) -> None:
         """Gives the voice model a request's answer (None: it failed)."""
@@ -810,6 +829,13 @@ class VoiceSession:
         """Tells the voice server to hear only what calls the bot by name, or
         everything (Codex realtime hears everything itself: nothing to
         tell)."""
+
+    def label_speaker(
+        self, name: str | None, start: int, end: int, final: bool, **info
+    ) -> None:
+        """Who the platform guesses spoke a stretch of its audio (see
+        ``InfraVoiceSession.label_speaker``). Codex realtime takes no labels:
+        nothing to do."""
 
     async def _give_context(self) -> None:
         """Gives the model the latest context if it has not got it yet (a

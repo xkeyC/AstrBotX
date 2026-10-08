@@ -71,6 +71,24 @@ async def test_a_group_voice_turn_runs_as_the_voice_member(turns):
 
 
 @pytest.mark.asyncio
+async def test_a_guessed_group_speaker_is_named_and_grants_nothing(turns):
+    seen, _ = turns
+    chat = VoiceChat(umo="mumble:GroupMessage:server", private=False)
+    await chat.ask("Task: x", speaker='42" admin')
+    ((event, prompt),) = seen
+    assert event.get_sender_id() == VOICE_SENDER_ID
+    assert event.role == "member"
+    assert 'speaker="Voice, maybe 42\' admin (a guess)"' in prompt
+    # One to one the speaker is known: a guess changes nothing.
+    seen.clear()
+    chat = VoiceChat(
+        umo="qq:FriendMessage:42", private=True, sender_id="42", sender_name="Alice"
+    )
+    await chat.ask("Task: x", speaker="Bob")
+    assert 'speaker="Alice"' in seen[0][1]
+
+
+@pytest.mark.asyncio
 async def test_prompt_attributes_and_the_closing_tag_cannot_be_forged(turns):
     seen, _ = turns
     chat = VoiceChat(

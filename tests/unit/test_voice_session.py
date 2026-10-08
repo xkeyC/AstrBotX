@@ -89,7 +89,7 @@ class FakeChat(VoiceChat):
     async def voice_persona(self) -> str:
         return self.persona
 
-    async def ask(self, body: str) -> str | None:
+    async def ask(self, body: str, speaker: str | None = None) -> str | None:
         self.asked.append(body)
         await self.release.wait()
         return self.answer

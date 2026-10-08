@@ -18,10 +18,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import bisect
 import fractions
+import inspect
 import json
 import time
 import wave
+from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -73,6 +77,25 @@ TAIL_FRAMES = 15
 # A platform tool's longest run: the voice turn waits for it.
 VOICE_TOOL_TIMEOUT = 30.0
 TAIL_GAP = 0.2
+# Where the audio handed to the server came from, kept this long (in frames
+# as the platform's media serves them, 20 ms): a speaker label for older
+# audio is dropped (the server keeps about a minute of them too).
+POSITION_FRAMES = 3000
+# Speaker labels go to the server at most this often (the platform sends
+# one segment's growing span every ~250 ms; only the newest counts).
+LABEL_INTERVAL = 0.2
+# A label passes on at most this many candidates (who it may be, and how
+# likely).
+LABEL_CANDIDATES = 3
+# on_wake is called at most this often (seconds): a call's wake word and
+# its transcript, or the next utterance's wake heard before this one's
+# transcript, are one turn toward the speaker.
+WAKE_DEBOUNCE = 3.0
+# A wake word heard this recently (seconds, and not yet matched by a called
+# transcript) is the one a called transcript was spotted by: that call was
+# already turned to. A called transcript without one was called by name in
+# its text (the spotter missed it): it turns.
+WAKE_COVERS = 30.0
 
 # How the voice thread's model takes part, ahead of the platform's prompt
 # (whose "delegate to the backend" and "stay silent" these define).
@@ -278,6 +301,26 @@ def tool_content(result) -> list[dict]:
     return [{"type": "inputText", "text": "Done." if result is None else str(result)}]
 
 
+@dataclass
+class SpeakerLabel:
+    """A platform's guess of who spoke a stretch of its audio, and what of
+    it the server has been told."""
+
+    name: str | None
+    start: int
+    end: int
+    final: bool
+    # How likely each is, likeliest first: (name, or None for someone not
+    # recognised; p). Empty: the platform gave none.
+    candidates: tuple[tuple[str | None, float], ...] = ()
+    # The server's sample index of ``start``, fixed once known (the server
+    # keeps one span per start).
+    given_start: int | None = None
+    # What the server was last told: (name, start, end, final,
+    # candidates), server samples.
+    given: tuple | None = None
+
+
 class InfraVoiceSession(VoiceSession):
     """A voice conversation on a local-multimodal-infra server, the voice
     thread's model doing the talking."""
@@ -305,8 +348,27 @@ class InfraVoiceSession(VoiceSession):
             self.tools = [t for t in self.tools if t.spec.get("name") not in reserved]
         self.thread_key = f"{self.thread_key}_infra"
         self._track = SpeechTrack()
-        # The last utterance heard (what a handed-off task was asked with).
+        # The last utterance heard (what a handed-off task was asked with),
+        # and who the server says said it (a guess: see label_speaker).
         self._heard = ""
+        self._speaker: str | None = None
+        # Where the audio handed to the server came from, frame by frame:
+        # (platform position, its end, server sample index, its end), the
+        # platform's positions growing (see _send).
+        self._positions: deque[tuple[int, int, int, int]] = deque(
+            maxlen=POSITION_FRAMES
+        )
+        # The platform's speaker labels not fully given yet, by start.
+        self._labels: dict[int, SpeakerLabel] = {}
+        self._labels_changed = asyncio.Event()
+        # When on_wake was last called (monotonic; see WAKE_DEBOUNCE).
+        self._woke_at: float | None = None
+        # When a wake word was last heard that no called transcript has
+        # matched yet (see WAKE_COVERS).
+        self._wake_heard_at: float | None = None
+        # Whether on_wake takes ``speaker=`` (an older platform's does not),
+        # for the callable it was checked for.
+        self._wake_takes_speaker: tuple[object, bool] | None = None
 
     def _thread_params(self) -> dict:
         """The voice thread: the voice instructions and persona, the
@@ -464,11 +526,224 @@ class InfraVoiceSession(VoiceSession):
                 RESULT_PROMPT.format(task=task, answer=answer or DONE_SPEECH)
             )
 
-        busy = self._ask(TASK_BODY.format(heard=self._heard or task, task=task), tell)
+        busy = self._ask(
+            TASK_BODY.format(heard=self._heard or task, task=task),
+            tell,
+            speaker=self._speaker,
+        )
         text = "Handed to the backend; the result comes later as a message."
         if busy:
             text += " It is still busy with an earlier request: this one is next."
         return {"contentItems": [{"type": "inputText", "text": text}], "success": True}
+
+    def label_speaker(
+        self,
+        name: str | None,
+        start: int,
+        end: int,
+        final: bool,
+        candidates: list[dict] | None = None,
+        **info,
+    ) -> None:
+        """Who the platform guesses spoke a stretch of its audio, for the
+        voice server to name in what it hears (``"name: text"``, or with
+        the likelihoods when unsure: ``"[Ann 62% / Bob 30%]: text"``).
+
+        The span is on the platform's clock (``PcmMedia.feed``'s ``pos``);
+        it reaches the server on the server's (its 16 kHz samples since the
+        session's audio began) once that audio was handed to it: a label for
+        audio still queued waits for it, one for audio that never reached
+        the server (dropped, or before this session) is dropped. A later
+        label with the same ``start`` replaces the earlier one.
+
+        Args:
+            name: Their name; None when not recognised.
+            start: The span's first sample, platform clock.
+            end: Its end (exclusive).
+            final: The span is complete (it is not sent again).
+            candidates: How likely each one is, likeliest first:
+                ``[{"name": str | None, "p": float}]`` (None: someone not
+                recognised); passed on (at most LABEL_CANDIDATES).
+            **info: More of the platform's guess (bearing, confidence),
+                not passed on.
+        """
+        if self._closed:
+            return
+        start, end = int(start), int(end)
+        ranked: list[tuple[str | None, float]] = []
+        for c in candidates or []:
+            try:
+                who = str(c.get("name") or "").strip() or None
+                p = round(min(max(float(c["p"]), 0.0), 1.0), 3)
+            except (AttributeError, KeyError, TypeError, ValueError):
+                continue  # one malformed entry left out
+            ranked.append((who, p))
+        ranked = ranked[:LABEL_CANDIDATES]
+        label = self._labels.get(start)
+        if label is None:
+            label = self._labels[start] = SpeakerLabel(
+                name, start, end, bool(final), tuple(ranked)
+            )
+        else:
+            label.name, label.end, label.final = name, end, bool(final)
+            label.candidates = tuple(ranked)
+        self._labels_changed.set()
+
+    def _server_sample(self, pos: int) -> int:
+        """The server's sample index of the platform's position ``pos`` (at
+        least the first one handed over); audio dropped on the way takes
+        the index of what followed it."""
+        positions = self._positions
+        i = bisect.bisect_right(positions, (pos, float("inf"))) - 1
+        if i < 0:
+            return positions[0][2]
+        start, end, sample, sample_end = positions[i]
+        if pos < end:
+            return sample + round((pos - start) * (sample_end - sample) / (end - start))
+        return positions[i + 1][2] if i + 1 < len(positions) else sample_end
+
+    def _labels_to_give(self) -> list[tuple[int, SpeakerLabel, tuple, tuple]]:
+        """The speaker labels the server has not been told as they are now:
+        (key, label, what to tell, the label as it was then) each; labels
+        done with are forgotten. A label counts as told (and a final one is
+        forgotten) only once telling succeeded (``_label_given``)."""
+        if not self._positions:
+            return []
+        first, last = self._positions[0][0], self._positions[-1][1]
+        updates = []
+        for key, label in list(self._labels.items()):
+            if label.end <= first:
+                # Older than what is kept, or it never reached the server.
+                del self._labels[key]
+                continue
+            if label.start >= last:
+                continue  # not handed over yet
+            if label.given_start is None:
+                label.given_start = self._server_sample(label.start)
+            complete = label.end <= last
+            given = (
+                label.name,
+                label.given_start,
+                self._server_sample(min(label.end, last)),
+                label.final and complete,
+                label.candidates,
+            )
+            if given[2] <= given[1] or given == label.given:
+                # All of it dropped on the way, or nothing new.
+                if given[3]:
+                    del self._labels[key]
+                continue
+            updates.append(
+                (
+                    key,
+                    label,
+                    given,
+                    (label.name, label.end, label.final, label.candidates),
+                )
+            )
+        return updates
+
+    def _label_given(
+        self, key: int, label: SpeakerLabel, given: tuple, was: tuple
+    ) -> None:
+        """The server was told ``given`` of ``label``: a final one is done
+        with, unless the platform changed it meanwhile."""
+        label.given = given
+        if (
+            given[3]
+            and self._labels.get(key) is label
+            and (label.name, label.end, label.final, label.candidates) == was
+        ):
+            del self._labels[key]
+
+    async def _give_labels(self) -> None:
+        """Gives the server the platform's speaker labels as they change and
+        as their audio reaches it, at most every LABEL_INTERVAL; one not
+        given (the call failed) is tried again the next time."""
+        while True:
+            await self._labels_changed.wait()
+            self._labels_changed.clear()
+            for key, label, given, was in self._labels_to_give():
+                name, start, end, final, candidates = given
+                update = {
+                    "speaker": {
+                        "name": name,
+                        "start": start,
+                        "end": end,
+                        "final": final,
+                    }
+                }
+                if candidates:
+                    update["speaker"]["candidates"] = [
+                        {"name": who, "p": p} for who, p in candidates
+                    ]
+                try:
+                    await self._engine.rt.realtime_append_text(
+                        self._thread_id, json.dumps(update), "voice_session"
+                    )
+                except Exception as exc:  # noqa: BLE001 - the conversation goes on
+                    logger.warning(
+                        "%s voice %s: speaker label not given: %s",
+                        self.label,
+                        self.key,
+                        exc,
+                    )
+                    self._labels_changed.set()  # the next round tries again
+                    break
+                self._label_given(key, label, given, was)
+            await asyncio.sleep(LABEL_INTERVAL)
+
+    def _called(self, source: str, speaker: str | None = None) -> None:
+        """The bot was called by name (``source``: ``wake`` or
+        ``transcript``, whose ``speaker`` is the server's guess of who said
+        it): ``on_wake``, at most once per WAKE_DEBOUNCE. What it does
+        (turning toward the speaker) never gets in the conversation's way."""
+        if self._on_wake is None or self._closed:
+            return
+        now = time.monotonic()
+        if self._woke_at is not None and now - self._woke_at < WAKE_DEBOUNCE:
+            return
+        self._woke_at = now
+        logger.debug(
+            "%s voice %s: called (%s, %s)", self.label, self.key, source, speaker
+        )
+        kwargs: dict = {"source": source}
+        if self._wake_takes(self._on_wake):
+            kwargs["speaker"] = speaker
+        try:
+            result = self._on_wake(**kwargs)
+        except Exception as exc:  # noqa: BLE001 - the conversation goes on
+            logger.warning("%s voice %s: on_wake failed: %s", self.label, self.key, exc)
+            return
+        if inspect.isawaitable(result):
+
+            async def wait() -> None:
+                try:
+                    await result
+                except Exception as exc:  # noqa: BLE001 - the conversation goes on
+                    logger.warning(
+                        "%s voice %s: on_wake failed: %s", self.label, self.key, exc
+                    )
+
+            self._spawn(wait(), "wake")
+
+    def _wake_takes(self, on_wake) -> bool:
+        """Whether ``on_wake`` takes ``speaker=`` (a platform made before it
+        was passed does not), checked once per callable."""
+        if (
+            self._wake_takes_speaker is None
+            or self._wake_takes_speaker[0] is not on_wake
+        ):
+            try:
+                params = inspect.signature(on_wake).parameters.values()
+                takes = any(
+                    p.name == "speaker" or p.kind is inspect.Parameter.VAR_KEYWORD
+                    for p in params
+                )
+            except (TypeError, ValueError):
+                takes = False
+            self._wake_takes_speaker = (on_wake, takes)
+        return self._wake_takes_speaker[1]
 
     async def _give_wake(self) -> None:
         """Tells the voice server whether to pass on only what calls the bot
@@ -534,6 +809,7 @@ class InfraVoiceSession(VoiceSession):
         self._phase("voice server session started")
         self._spawn(self.media.play(self._track), "outbound")
         self._spawn(self._send(), "send")
+        self._spawn(self._give_labels(), "speakers")
         self.media.start()
         self.started_at = time.monotonic()
         self.ready = True
@@ -548,11 +824,50 @@ class InfraVoiceSession(VoiceSession):
         )
 
     async def _send(self) -> None:
-        """Hands the platform's audio to Codex as 16 kHz mono PCM."""
+        """Hands the platform's audio to Codex as 16 kHz mono PCM, keeping
+        where each frame came from (the media's ``track.pos``, if it tells)
+        and where it lands on the server's clock, for speaker labels."""
         resampler = av.AudioResampler(format="s16", layout="mono", rate=IN_RATE)
+        # Seconds handed over: the server counts its samples from its first
+        # (it gets all of them, after it started).
+        #
+        # Known limitation: Codex queues the audio for the server in a
+        # bounded queue (256 frames, about 5 s) and drops a frame when it is
+        # full (``realtime_conversation.rs`` ``audio_in``: ``try_send``),
+        # while the call here still succeeds. After such a stall ``sent``
+        # runs ahead of the server's clock by what was dropped, and speaker
+        # labels land that much late until the session restarts. Codex logs
+        # it as the warning "dropping input audio frame due to full queue":
+        # that line in Codex's log is how to tell.
+        sent = 0.0
         try:
             while True:
                 frame = await self.media.track.recv()
+                pos = getattr(self.media.track, "pos", None)
+                seconds = frame.samples / frame.sample_rate
+                if pos is not None:
+                    if self._positions and pos < self._positions[-1][1]:
+                        # The platform's clock went back (a new one): what
+                        # was kept is on the old one. Labels from here on
+                        # that were never given on the old clock are the new
+                        # one's (they may come before their audio is sent).
+                        self._positions.clear()
+                        self._labels = {
+                            key: label
+                            for key, label in self._labels.items()
+                            if label.start >= pos and label.given_start is None
+                        }
+                    self._positions.append(
+                        (
+                            pos,
+                            pos + frame.samples,
+                            round(sent * IN_RATE),
+                            round((sent + seconds) * IN_RATE),
+                        )
+                    )
+                    if self._labels:
+                        self._labels_changed.set()  # more of them may go now
+                sent += seconds
                 for out in resampler.resample(frame):
                     pcm = bytes(out.planes[0])[: out.samples * 2]
                     await self._engine.rt.realtime_append_audio(
@@ -608,10 +923,44 @@ class InfraVoiceSession(VoiceSession):
                 # Talked over: what is buffered goes.
                 self._track.clear()
                 self.media.flush()
+            elif wake := payload.get("InputWake"):
+                logger.debug(
+                    "%s voice %s: wake word %r (%.2f)",
+                    self.label,
+                    self.key,
+                    wake.get("word"),
+                    float(wake.get("score") or 0),
+                )
+                self._wake_heard_at = time.monotonic()
+                self._called("wake")
             elif done := payload.get("InputTranscriptDone"):
                 self.last_transcript_at = time.monotonic()
                 self._heard = str(done.get("text") or "")
+                self._speaker = done.get("speaker") or None
                 logger.debug("%s voice %s heard: %s", self.label, self.key, self._heard)
+                # ``called``: a wake word in it, or its text names the bot
+                # (the spotter missed it), or it goes on from a call. A wake
+                # word heard since the last called transcript was this one's
+                # (or, heard before this transcript came, the next one's: a
+                # turn to the newer call): the wake path turned already.
+                now = time.monotonic()
+                wake_heard = (
+                    self._wake_heard_at is not None
+                    and now - self._wake_heard_at < WAKE_COVERS
+                )
+                called = bool(done.get("called"))
+                if called:
+                    self._wake_heard_at = None
+                # While the server passes on only what calls the bot, what
+                # wants a reply and no wake word turned to was called by its
+                # transcript (or goes on with the exchange).
+                if (
+                    done.get("respond")
+                    and not (called and wake_heard)
+                    and not self.chat.private
+                    and self._wake
+                ):
+                    self._called("transcript", self._speaker)
             elif "InputTranscriptDelta" in payload:
                 self.last_transcript_at = time.monotonic()
             elif "OutputTranscriptDelta" in payload:

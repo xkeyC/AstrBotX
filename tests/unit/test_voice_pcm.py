@@ -154,3 +154,72 @@ async def test_a_small_prebuffer_keeps_its_pace(monkeypatch):
     assert media._lead == 2
     assert PcmMedia(lambda chunk: None, buffer_seconds=3, prebuffer_frames=1)._lead == 0
     assert PcmMedia(lambda chunk: None, buffer_seconds=3)._lead == pcm.LEAD_FRAMES
+
+
+def test_inbound_positions_travel_with_the_audio(monkeypatch):
+    monkeypatch.setattr(pcm, "MAX_BACKLOG_BYTES", FRAME_BYTES * 4)
+    loud = (np.full(pcm.FRAME_SAMPLES, 3000, dtype=np.int16)).tobytes()
+    media = PcmMedia(lambda chunk: None)
+    # Six frames while held: the backlog keeps the last four.
+    for i in range(6):
+        media.feed(loud, pos=10_000 + i * pcm.FRAME_SAMPLES)
+    media.start()
+    track = pcm.FrameTrack(media)
+    assert media.pull() is not None
+    assert media.pulled_pos == 10_000 + 2 * pcm.FRAME_SAMPLES
+    # Half frames, and a jump on the platform's clock (it lost audio); the
+    # backlog drops the oldest frame again.
+    media.feed(loud[: FRAME_BYTES // 2], pos=20_000)
+    media.feed(loud[FRAME_BYTES // 2 :], pos=20_000 + pcm.FRAME_SAMPLES // 2)
+    media.feed(loud, pos=30_000)
+    served = []
+    for _ in range(4):
+        assert media.pull() is not None
+        served.append(media.pulled_pos)
+    assert served == [
+        10_000 + 4 * pcm.FRAME_SAMPLES,
+        10_000 + 5 * pcm.FRAME_SAMPLES,
+        20_000,
+        30_000,
+    ]
+    assert media.pull() is None and media.pulled_pos is None
+    # Audio without a position has none.
+    media.feed(loud)
+    media.feed(loud)
+    assert media.pull() is not None and media.pulled_pos is None
+    assert track.pos is None
+
+
+def test_trimmed_silence_takes_its_positions_along():
+    loud = (np.full(pcm.FRAME_SAMPLES, 3000, dtype=np.int16)).tobytes()
+    quiet = bytes(FRAME_BYTES)
+    media = PcmMedia(lambda chunk: None)
+    frames = [loud] * 5 + [quiet] * 100 + [loud] * 5
+    for i, frame in enumerate(frames):
+        media.feed(frame, pos=i * pcm.FRAME_SAMPLES)
+    media.start()
+    served = {}
+    while (frame := media.pull()) is not None:
+        served[media.pulled_pos // pcm.FRAME_SAMPLES] = frame
+    # The pause beyond its first second went; what follows it says where
+    # it came from.
+    assert sorted(served)[: 5 + pcm.KEEP_SILENT_FRAMES] == list(
+        range(5 + pcm.KEEP_SILENT_FRAMES)
+    )
+    assert sorted(served)[-5:] == list(range(105, 110))
+    assert all(served[i] == loud for i in range(105, 110))
+
+
+@pytest.mark.asyncio
+async def test_the_track_tells_where_each_frame_came_from():
+    media = PcmMedia(lambda chunk: None)
+    media.feed(bytes(FRAME_BYTES * 2), pos=480)
+    media.start()
+    track = media.track
+    await track.recv()
+    assert track.pos == 480
+    await track.recv()
+    assert track.pos == 480 + pcm.FRAME_SAMPLES
+    await track.recv()  # ran dry: silence
+    assert track.pos is None
+    track.stop()

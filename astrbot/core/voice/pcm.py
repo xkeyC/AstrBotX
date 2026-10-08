@@ -62,13 +62,19 @@ class FrameSource(Protocol):
 
 class FrameTrack(MediaStreamTrack):
     """Serves a source's 20 ms frames as an aiortc track at real-time pace;
-    silence when the source has nothing."""
+    silence when the source has nothing.
+
+    ``pos`` is where the frame ``recv`` returned last came from: the
+    platform's sample index of its first sample (the source's
+    ``pulled_pos``), None for silence or when the platform gave none.
+    """
 
     kind = "audio"
 
     def __init__(self, source: FrameSource) -> None:
         super().__init__()
         self.source = source
+        self.pos: int | None = None
         self._pts = 0
         self._start: float | None = None
         self._silence = bytes(FRAME_BYTES)
@@ -84,7 +90,9 @@ class FrameTrack(MediaStreamTrack):
         elif wait < -1.0:
             # The loop stalled; resync instead of bursting to catch up.
             self._start = time.monotonic() - self._pts / SAMPLE_RATE
-        data = self.source.pull() or self._silence
+        data = self.source.pull()
+        self.pos = getattr(self.source, "pulled_pos", None) if data else None
+        data = data or self._silence
         frame = av.AudioFrame(format="s16", layout="mono", samples=FRAME_SAMPLES)
         frame.planes[0].update(data)
         frame.sample_rate = SAMPLE_RATE
@@ -100,6 +108,11 @@ class PcmMedia:
     The platform calls ``feed`` with what the other side says, in chunks of
     any size, and gets the bot's voice through ``send``: as it arrives, or,
     with a playout buffer, at real-time pace so ``flush`` can still drop it.
+
+    Inbound audio may come with its position on the platform's own clock
+    (``feed``'s ``pos``): it travels with the bytes through what is dropped
+    and trimmed, so each frame served says where it came from
+    (``pulled_pos``, the track's ``pos``).
     """
 
     def __init__(
@@ -141,6 +154,11 @@ class PcmMedia:
         # or the queue runs dry at once and playback stutters.
         self._lead = min(LEAD_FRAMES, self._prebuffer - 1)
         self._buffer = bytearray()
+        # Where the queued inbound bytes came from, in order: runs of
+        # [platform position of their first sample (None: not given), bytes].
+        self._runs: deque[list] = deque()
+        # The position of the frame ``pull`` returned last (None: none).
+        self.pulled_pos: int | None = None
         # Silent frames served in a row (inbound).
         self._silent_run = 0
         self._playing = False
@@ -149,16 +167,57 @@ class PcmMedia:
         self.muted = False
         self.track = FrameTrack(self)
 
-    def feed(self, pcm: bytes) -> None:
-        """Queues inbound audio for the model."""
-        if self.muted:
+    def feed(self, pcm: bytes, pos: int | None = None) -> None:
+        """Queues inbound audio for the model.
+
+        Args:
+            pcm: 16-bit mono PCM at 48 kHz.
+            pos: The platform's sample index of its first sample (its own
+                clock, e.g. samples received since it connected), if it
+                keeps one.
+        """
+        if self.muted or not pcm:
             return
+        last = self._runs[-1] if self._runs else None
+        if last is not None and (
+            # Goes on from the last run: one run.
+            (pos is None and last[0] is None)
+            or (
+                pos is not None
+                and last[0] is not None
+                and last[0] + last[1] // 2 == pos
+            )
+        ):
+            last[1] += len(pcm)
+        else:
+            self._runs.append([pos, len(pcm)])
         self._buffer += pcm
         if len(self._buffer) > MAX_BACKLOG_BYTES:
             # Keep whole samples: drop an even number of bytes.
-            del self._buffer[: (len(self._buffer) - MAX_BACKLOG_BYTES) & ~1]
+            self._take((len(self._buffer) - MAX_BACKLOG_BYTES) & ~1)
+
+    def _take(self, size: int) -> int | None:
+        """Drops the first ``size`` inbound bytes.
+
+        Returns:
+            The platform position of the first of them (None: not given).
+        """
+        del self._buffer[:size]
+        pos = self._runs[0][0] if self._runs else None
+        while size > 0 and self._runs:
+            run = self._runs[0]
+            if run[1] <= size:
+                size -= run[1]
+                self._runs.popleft()
+            else:
+                run[1] -= size
+                if run[0] is not None:
+                    run[0] += size // 2
+                size = 0
+        return pos
 
     def pull(self) -> bytes | None:
+        self.pulled_pos = None
         if self.holding:
             return None
         if not self._playing:
@@ -173,9 +232,9 @@ class PcmMedia:
             and len(self._buffer) > (CATCH_UP_FRAMES + 1) * FRAME_BYTES
             and is_silent(self._buffer[:FRAME_BYTES])
         ):
-            del self._buffer[:FRAME_BYTES]  # a backlog drains in the pauses
+            self._take(FRAME_BYTES)  # a backlog drains in the pauses
         frame = bytes(self._buffer[:FRAME_BYTES])
-        del self._buffer[:FRAME_BYTES]
+        self.pulled_pos = self._take(FRAME_BYTES)
         self._silent_run = self._silent_run + 1 if is_silent(frame) else 0
         return frame
 
@@ -270,6 +329,7 @@ class PcmMedia:
     def stop(self) -> None:
         self.muted = True
         self._buffer.clear()
+        self._runs.clear()
         self.flush()
 
     def flush(self) -> None:
