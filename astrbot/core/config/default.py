@@ -3428,7 +3428,7 @@ CONFIG_METADATA_3 = {
                     "agent_runner.config.reasoning_effort": {
                         "description": "推理强度",
                         "type": "string",
-                        "options": ["", "minimal", "low", "medium", "high", "xhigh"],
+                        "options": ["", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
                     },
                     "agent_runner.config.sandbox": {
                         "description": "沙箱模式",

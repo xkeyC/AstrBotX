@@ -68,7 +68,7 @@ export const EMOTIONS = [
   'surprised',
   'none'
 ]
-export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
 export const COMPACTION_MODES = ['auto', 'local', 'remote']
 
 let keySeq = 0
