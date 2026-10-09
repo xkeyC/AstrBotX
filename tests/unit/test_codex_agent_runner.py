@@ -430,6 +430,66 @@ def test_approval_is_answered_for_the_turn_it_arrived_in():
     asyncio.run(run())
 
 
+def test_tool_call_runs_only_for_the_turn_it_came_from():
+    from astrbot.core.agent.runners.codex.native import (
+        TURN_ID_FIELD,
+        ActiveTurn,
+        ThreadPump,
+        _TurnRoute,
+    )
+
+    answers: dict[str, dict] = {}
+    handled: list[str] = []
+
+    class Rt:
+        async def dynamic_tool_response(self, thread_id, call_id, result):
+            import json
+
+            answers[call_id] = json.loads(result)
+
+    async def handler(msg):
+        handled.append(msg["callId"])
+        return {"contentItems": [], "success": True}
+
+    async def run():
+        pump = ThreadPump(SimpleNamespace(rt=Rt(), pumps={}), "t1")
+        turn = ActiveTurn(SimpleNamespace(), "t1", "", "B")
+        route = _TurnRoute(asyncio.Queue(), handler, None, turn)
+
+        def call(call_id, turn_id):
+            return {"callId": call_id, "tool": "x", TURN_ID_FIELD: turn_id}
+
+        # A call while B's turn is being submitted waits for its id.
+        mine = asyncio.create_task(pump._answer_tool(call("c1", "b1"), route))
+        stale = asyncio.create_task(pump._answer_tool(call("c2", "a1"), route))
+        await asyncio.sleep(0)
+        assert not answers
+        turn.turn_id = "b1"
+        turn.turn_ids.add("b1")
+        turn.ready.set()
+        await asyncio.gather(mine, stale)
+        assert handled == ["c1"]
+        assert answers["c1"]["success"] is True
+        # The interrupted turn A's call never runs as sender B.
+        assert answers["c2"]["success"] is False
+
+        # A continuation's call made before its submit returns.
+        turn.ready.clear()
+        cont = asyncio.create_task(pump._answer_tool(call("c3", "b2"), route))
+        await asyncio.sleep(0)
+        turn.turn_id = "b2"
+        turn.turn_ids.add("b2")
+        turn.ready.set()
+        await cont
+        assert handled == ["c1", "c3"]
+
+        # Unbound routes (voice, provider adapter) keep answering every call.
+        await pump._answer_tool(call("c4", "zz"), _TurnRoute(asyncio.Queue(), handler))
+        assert handled[-1] == "c4"
+
+    asyncio.run(run())
+
+
 def test_persona_catalog_only_when_personas_alternate():
     from astrbot.core.agent.runners.codex.codex_agent_runner import persona_context
 

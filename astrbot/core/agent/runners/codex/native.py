@@ -104,7 +104,10 @@ class ActiveTurn:
     #: Set once `turn_id` is known, or once the turn failed to start. Registered
     #: before the submit so a follow-up arriving during that round trip waits
     #: for the turn instead of being queued behind it as a separate reply.
+    #: Cleared again while a continuation is being submitted.
     ready: asyncio.Event = field(default_factory=asyncio.Event)
+    #: Every turn started for it, continuations included.
+    turn_ids: set[str] = field(default_factory=set)
 
 
 # umo -> running turn
@@ -223,6 +226,26 @@ class _TurnRoute:
     events: asyncio.Queue[JsonObject]
     tool_handler: ToolCallHandler | None
     approval_handler: ApprovalHandler | None = None
+    #: The turn the route serves; its tool handler runs as that turn's sender.
+    turn: ActiveTurn | None = None
+
+
+async def _calls_from_route_turn(route: _TurnRoute, msg: JsonObject) -> bool:
+    """Whether a tool call comes from the turn ``route`` serves.
+
+    A turn interrupted just before (timed out, cancelled, or another sender's
+    left running) can still call a tool after the next turn opened its route;
+    run there, it would act as that turn's sender.
+    """
+    turn = route.turn
+    turn_of = msg.get(TURN_ID_FIELD) or msg.get("turnId") or msg.get("turn_id")
+    if turn is None or not turn_of:
+        return True
+    if not turn.ready.is_set():
+        # Ours may be the turn being submitted right now.
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(turn.ready.wait(), STEER_READY_TIMEOUT_S)
+    return turn_of in turn.turn_ids
 
 
 @dataclass
@@ -248,6 +271,11 @@ class ThreadPump:
         self.route = _TurnRoute(queue, tool_handler, approval_handler)
         return queue
 
+    def bind_turn(self, turn: ActiveTurn) -> None:
+        """Tool calls through the open route must come from ``turn``."""
+        if self.route is not None:
+            self.route.turn = turn
+
     def close_turn(self) -> None:
         self.route = None
 
@@ -265,7 +293,9 @@ class ThreadPump:
                 event = json.loads(raw)
                 msg = event.get("msg") or {}
                 if msg.get("type") == "dynamic_tool_call_request":
-                    task = asyncio.create_task(self._answer_tool(msg))
+                    msg[TURN_ID_FIELD] = str(event.get("id") or "")
+                    # Bound now, like approvals: see _calls_from_route_turn.
+                    task = asyncio.create_task(self._answer_tool(msg, self.route))
                     self.tool_tasks.add(task)
                     task.add_done_callback(self.tool_tasks.discard)
                     continue
@@ -327,9 +357,8 @@ class ThreadPump:
         except Exception as e:  # noqa: BLE001
             logger.warning("codex approval response for %s failed: %s", call_id, e)
 
-    async def _answer_tool(self, msg: JsonObject) -> None:
+    async def _answer_tool(self, msg: JsonObject, route: _TurnRoute | None) -> None:
         call_id = msg.get("callId") or msg.get("call_id") or ""
-        route = self.route
         try:
             if route is None or route.tool_handler is None:
                 result = {
@@ -337,6 +366,21 @@ class ThreadPump:
                         {
                             "type": "inputText",
                             "text": "No AstrBot session is attached to this call.",
+                        }
+                    ],
+                    "success": False,
+                }
+            elif not await _calls_from_route_turn(route, msg):
+                logger.warning(
+                    "Codex tool call %s from turn %s refused: not the open turn's",
+                    msg.get("tool"),
+                    msg.get(TURN_ID_FIELD),
+                )
+                result = {
+                    "contentItems": [
+                        {
+                            "type": "inputText",
+                            "text": "error: this call's turn is no longer running.",
                         }
                     ],
                     "success": False,

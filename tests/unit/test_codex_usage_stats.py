@@ -118,6 +118,9 @@ class _Pump:
             queue.put_nowait(event)
         return queue
 
+    def bind_turn(self, turn):
+        pass
+
     def close_turn(self):
         pass
 

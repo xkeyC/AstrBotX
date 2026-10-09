@@ -1081,6 +1081,7 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                     )
                     self._active = active
                     ACTIVE_TURNS[self.umo] = active
+                    pump.bind_turn(active)
                     self._usage.start(await thread_usage(engine, thread_id))
                     self.stats.start_time = time.time()
                     try:
@@ -1102,6 +1103,7 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                                 f"Codex did not accept the turn: {sub.get('reason')}"
                             )
                         active.turn_id = str(sub.get("turn_id") or "")
+                        active.turn_ids.add(active.turn_id)
                         # Running from here on: stopping or leaving must now
                         # interrupt it, even before the loop below starts.
                         self._turn_running = True
@@ -1261,6 +1263,9 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                                 and continuations < MAX_CONTINUATIONS
                             ):
                                 continuations += 1
+                                # A tool call of the continuation may come
+                                # before its id: it waits for the submit.
+                                active.ready.clear()
                                 try:
                                     again = await engine.submit_turn(
                                         thread_id,
@@ -1284,8 +1289,13 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                                         "Codex continuation not submitted: %s", e
                                     )
                                     again = {}
+                                finally:
+                                    # Waiters run only once this task yields,
+                                    # after the id below is recorded.
+                                    active.ready.set()
                                 if again.get("status") == "started":
                                     active.turn_id = str(again.get("turn_id") or "")
+                                    active.turn_ids.add(active.turn_id)
                                     follow_up_since = (
                                         last_agent_seq if unanswered else None
                                     )
