@@ -30,18 +30,13 @@
         "tool_mode": {"description": "ツールモード", "hint": "code_mode_only：モデルが JS exec ですべてのツールを呼び出します。ツールは遅延読み込みされ、数が増えてもプロンプトとキャッシュに影響しません（推奨）。"},
         "code_mode_host": {"description": "code mode ホストのパス", "hint": "codex-code-mode-host 実行ファイル。空欄の場合はバインディングに同梱されたものを使用します。"},
         "exec_as_function_tool": {"description": "exec を関数ツールとして公開", "hint": "文法制約付きツールに対応していないプロバイダー（OpenAI 系以外）で有効にします。"},
-        "native_exec_tools": {"description": "Codex のネイティブ実行ツールを有効化", "hint": "Codex がローカルの shell と apply_patch をサンドボックスの範囲で使用できます。グループチャットでは推奨しません。"},
         "shipyard_mode": {"description": "Shipyard モード（ファイル操作はすべてサンドボックス内）", "hint": "Shipyard Neo サンドボックスの実行環境を強制し、Codex のネイティブ実行ツールを無効化し、スキルもサンドボックスから読み取ります。Codex はオーケストレーションのみを行い、このホストのファイルには触れません。"},
-        "codex_self_exe": {"description": "codex 実行ファイルのパス", "hint": "ネイティブ実行ツールと記憶の整理に必要です。空欄の場合は、インストール時に同梱されていればバインディング内のものを使用します。"},
         "web_search": {"description": "Codex のウェブ検索を有効化"},
         "codex_home": {"description": "CODEX_HOME", "hint": "空欄の場合は data/codex_home を使用します（ログイン状態、config.toml、セッション記録、記憶）。ローカルの Codex CLI の ~/.codex とは独立しています。"},
         "proxy": {"description": "Codex プロキシ", "hint": "Codex のすべての通信（モデルへのリクエスト、ログイン、リアルタイム音声）がこのプロキシを経由します。AstrBot の他の部分には影響しません。socks5://、socks5h://、http:// に対応（例: socks5://127.0.0.1:7890）。認証情報は URL に含めます（socks5://user:pass@host:port）。空欄の場合は直接、またはシステム／環境変数の設定に従って接続します。"},
         "model": {"description": "モデル", "hint": "空欄の場合は Codex の既定モデルを使用します。"},
         "model_provider": {"description": "モデルプロバイダー ID", "hint": "カスタムプロバイダーは Codex ページで管理します。空欄の場合は既定値を使用します。"},
         "reasoning_effort": {"description": "推論の強度"},
-        "sandbox": {"description": "サンドボックスモード", "hint": "Codex 内蔵の shell とファイル変更の範囲を制御します。グループチャットでは読み取り専用を推奨します。"},
-        "approval_policy": {"description": "承認ポリシー"},
-        "auto_approve": {"description": "承認リクエストを自動承認", "hint": "承認ポリシーが never 以外のときに適用されます。無効にするとすべて拒否されます。"},
         "cwd": {"description": "作業ディレクトリ", "hint": "空欄の場合、各セッションは data/codex_workspaces/<セッション> を使用します。"},
         "developer_instructions": {"description": "追加の開発者指示"},
         "base_instructions": {"description": "システムプロンプト", "hint": "Codex の基本指示を置き換えます。空欄の場合は AstrBot 内蔵の簡潔なチャット用プロンプトを使用します。"},
@@ -594,6 +589,15 @@
         "labels": [
           "常時接続モード",
           "Webhook サーバーモード"
+        ]
+      },
+      "content_moderation": {
+        "description": "コンテンツ審査",
+        "hint": "このプラットフォームのメッセージをクラウドモデルに送る前に審査するか（システム設定で審査サービスの URL が必要）。テキストのみ: 文字だけを審査し、画像は審査しません。",
+        "labels": [
+          "オン",
+          "テキストのみ",
+          "オフ"
         ]
       },
       "lark_encrypt_key": {
@@ -1364,6 +1368,46 @@
       },
       "no_proxy": {
         "description": "プロキシを使用しないアドレス一覧"
+      },
+      "content_moderation_url": {
+        "description": "コンテンツ審査サービスの URL",
+        "hint": "OpenAI 互換の審査 API（POST /v1/moderations）のサービス URL。例: http://127.0.0.1:17890。ユーザーのメッセージはクラウドモデルに送る前に審査され、違反と判定されたものは送信されず定型文で返信します。空欄の場合は審査しません。プラットフォームごとにオン・オフ・テキストのみを設定できます。"
+      },
+      "content_moderation_token": {
+        "description": "コンテンツ審査サービスのトークン",
+        "hint": "審査サービスでトークン保護が有効な場合に入力します。Authorization: Bearer <トークン> として送信します。空欄の場合は送信しません。"
+      },
+      "content_moderation_threshold": {
+        "description": "テキスト審査のしきい値",
+        "hint": "テキストの不安全確率（1 - 安全確率）がこの値を超えると違反と判定します。0 以上 1 未満、既定値 0.9。下げるほど厳しくなります。0.5 では検出が増えます（再現率約 97%）が、問題のない内容の誤判定も大きく増えます（約 10%）。"
+      },
+      "content_moderation_nsfw_threshold": {
+        "description": "画像審査のしきい値",
+        "hint": "画像の NSFW 確率がこの値を超えると違反と判定します。0 以上 1 未満、既定値 0.5。下げるほど厳しく、上げるほど緩くなります。"
+      },
+      "content_moderation_nsfw_labels": {
+        "description": "違反とする画像の段階",
+        "hint": "画像分類器のどの段階を違反とするか。選んだ段階の確率の合計を画像審査のしきい値と比較します。既定は 3 段階すべて。露骨な画像だけを対象にするには「きわどい」を外してください。何も選ばない場合は審査サービス側の設定を使います。",
+        "labels": [
+          "きわどい（水着・下着など）",
+          "中程度",
+          "露骨"
+        ]
+      },
+      "content_moderation_categories": {
+        "description": "ブロックするテキストの種類",
+        "hint": "テキスト（画像内で読み取った文字を含む）は、選んだ種類で不安全と判定された場合のみブロックします。既定はすべて。画像そのものの NSFW 判定には影響しません（画像のしきい値と段階で決まります）。種類なしで不安全と判定されたテキストはブロックされます。何も選ばない場合はすべてと同じです。",
+        "labels": [
+          "暴力",
+          "暴力以外の違法行為",
+          "性的内容",
+          "プライバシー（他人の情報の要求・暴露）",
+          "自傷",
+          "非倫理的",
+          "政治的に敏感",
+          "著作権",
+          "ジェイルブレイク（モデルの制限の回避）"
+        ]
       }
     }
   },

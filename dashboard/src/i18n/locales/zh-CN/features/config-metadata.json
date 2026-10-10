@@ -30,18 +30,13 @@
         "tool_mode": {"description": "工具模式", "hint": "code_mode_only：模型通过 JS exec 编排所有工具，工具延迟加载，工具数量不影响提示词与缓存（推荐）。"},
         "code_mode_host": {"description": "code mode 宿主程序路径", "hint": "codex-code-mode-host 可执行文件；留空则使用绑定包内自带的版本。"},
         "exec_as_function_tool": {"description": "exec 使用函数工具形式", "hint": "供应商不支持语法约束工具（非 OpenAI 系）时开启。"},
-        "native_exec_tools": {"description": "启用 Codex 原生执行工具", "hint": "开启后 Codex 可使用本机 shell / apply_patch（受沙箱约束），群聊场景不建议开启。"},
         "shipyard_mode": {"description": "Shipyard 模式（全部文件操作在沙箱内）", "hint": "强制使用 Shipyard Neo 沙箱执行环境，禁用 Codex 原生执行工具，skills 也从沙箱读取；Codex 只做编排，不读写本机文件。"},
-        "codex_self_exe": {"description": "codex 可执行文件路径", "hint": "原生执行工具与记忆沉淀需要；留空则使用绑定包内自带的版本（若安装时包含）。"},
         "web_search": {"description": "启用 Codex 联网搜索"},
         "codex_home": {"description": "CODEX_HOME", "hint": "留空使用 data/codex_home（登录状态、config.toml、会话记录与记忆）。与本机 Codex CLI 的 ~/.codex 相互独立。"},
         "proxy": {"description": "Codex 代理", "hint": "Codex 的所有网络请求都走这个代理（模型请求、登录、实时语音），不影响 AstrBot 其他部分。支持 socks5://、socks5h://、http://，例如 socks5://127.0.0.1:7890；账号密码写在地址里（socks5://user:pass@host:port）。留空则按系统或环境变量设置直连。"},
         "model": {"description": "模型", "hint": "留空使用 Codex 默认模型。"},
         "model_provider": {"description": "模型提供商 ID", "hint": "自定义提供商在 Codex 页面管理；留空使用默认。"},
         "reasoning_effort": {"description": "推理强度"},
-        "sandbox": {"description": "沙箱模式", "hint": "控制 Codex 内置 shell / 文件修改能力的范围。群聊场景建议只读。"},
-        "approval_policy": {"description": "审批策略"},
-        "auto_approve": {"description": "自动批准审批请求", "hint": "审批策略不为 never 时生效；关闭则全部拒绝。"},
         "cwd": {"description": "工作目录", "hint": "留空则每个会话使用 data/codex_workspaces/<会话>。"},
         "developer_instructions": {"description": "附加开发者指令"},
         "base_instructions": {"description": "系统提示词", "hint": "替换 Codex 的基础指令；留空使用 AstrBot 内置的精简聊天提示词。"},
@@ -584,6 +579,15 @@
         "labels": [
           "长连接模式",
           "推送至服务器模式"
+        ]
+      },
+      "content_moderation": {
+        "description": "内容审核",
+        "hint": "该平台的消息发给云端模型前是否先审核（需在系统配置中填写内容审核服务地址）。仅文本：只审核文字，图片不审核。",
+        "labels": [
+          "开启",
+          "仅文本",
+          "关闭"
         ]
       },
       "lark_encrypt_key": {
@@ -1358,6 +1362,46 @@
       },
       "no_proxy": {
         "description": "直连地址列表"
+      },
+      "content_moderation_url": {
+        "description": "内容审核服务地址",
+        "hint": "兼容 OpenAI 审核接口（POST /v1/moderations）的服务地址，例如 http://127.0.0.1:17890。用户消息发给云端模型前先经它审核，被判违规的不发送并回复固定提示。留空则不审核。各平台可在平台设置中单独开启、关闭或仅审核文本。"
+      },
+      "content_moderation_token": {
+        "description": "内容审核服务密钥",
+        "hint": "审核服务开启了密钥保护时填写，以 Authorization: Bearer <密钥> 发送。留空则不带密钥。"
+      },
+      "content_moderation_threshold": {
+        "description": "文字审核阈值",
+        "hint": "文字的不安全概率（1 - 安全概率）高于此值即判违规，取值 0 到 1（不含 1），默认 0.9。调低更严：0.5 能多拦一些（召回约 97%），但误判正常内容也明显增多（约 10%）。"
+      },
+      "content_moderation_nsfw_threshold": {
+        "description": "图片审核阈值",
+        "hint": "图片的色情（NSFW）概率高于此值即判违规，取值 0 到 1（不含 1），默认 0.5。调低更严，调高更松。"
+      },
+      "content_moderation_nsfw_labels": {
+        "description": "图片违规档位",
+        "hint": "图片分类器的哪些档位算作违规，它们的概率之和与图片审核阈值比较。默认三档都算；只想拦露骨图就取消“擦边”。全部不选时使用审核服务自己的设置。",
+        "labels": [
+          "擦边（泳装、内衣等）",
+          "中度",
+          "露骨"
+        ]
+      },
+      "content_moderation_categories": {
+        "description": "文字拦截类别",
+        "hint": "文字（含图片里识别出的文字）只在被判为所选类别时才拦截。默认全部拦截。图片本身的色情判定不受此项影响，由图片阈值和档位决定。模型判为不安全但没给出类别时仍会拦截。全部不选等于全选。",
+        "labels": [
+          "暴力",
+          "非暴力违法",
+          "色情",
+          "隐私（打听或泄露他人信息）",
+          "自残",
+          "不道德",
+          "政治敏感",
+          "版权",
+          "越狱（绕过模型限制）"
+        ]
       }
     }
   },

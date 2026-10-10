@@ -13,7 +13,6 @@ RULES = [
         "name": "one",
         "match": ["200/2"],
         "tools_allow": ["weather"],
-        "native_exec": "false",
     },
 ]
 
@@ -48,7 +47,6 @@ def test_tool_and_mcp_checks():
     one = resolve_policy(RULES, facts("2", "200"))
     assert one.allows_tool("weather")
     assert not one.allows_tool("counter")
-    assert one.native_exec is False
     assert "allowed tools: weather" in one.summary()
     assert DEFAULT_POLICY.is_default and not one.is_default
 
@@ -112,25 +110,12 @@ def test_dynamic_persona_bindings_migrate_once(tmp_path):
     assert "permission_rules" not in other
 
 
-def test_summary_names_the_sandbox_tools_that_still_work():
+def test_summary_names_only_tool_and_mcp_restrictions():
     from astrbot.core.permission_rules import PermissionPolicy
 
-    denied = PermissionPolicy(native_exec=False)
-    # Host execution is on for the bot, so the restriction is worth stating,
-    # and the model is pointed at what it can still use.
-    assert denied.summary(
-        host_exec=True, sandbox_tools=("exec_command", "write_stdin")
-    ) == (
-        "no command execution on the bot host "
-        "(the sandbox is unaffected: use exec_command, write_stdin)"
-    )
-    assert denied.summary(host_exec=True) == "no command execution on the bot host"
-    # Nothing runs on the host anyway: saying so would only confuse the model.
-    assert denied.summary(host_exec=False) == ""
-    assert denied.summary(host_exec=False, sandbox_tools=("exec_command",)) == ""
-
-    mixed = PermissionPolicy(tools_deny=("weather",), native_exec=False)
-    assert mixed.summary(host_exec=False) == "denied tools: weather"
+    assert PermissionPolicy().summary() == ""
+    mixed = PermissionPolicy(tools_deny=("weather",), mcp_allow=("web",))
+    assert mixed.summary() == "denied tools: weather; allowed MCP servers: web"
 
 
 def test_scheduled_task_limits_default_by_role_and_are_inherited():

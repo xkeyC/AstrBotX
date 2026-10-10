@@ -206,6 +206,7 @@ def _history(lines_and_ids, pending=(), pending_age=0.0):
     ctx.raw_records = gcc.defaultdict(gcc.deque)
     ctx._record_ids = gcc.defaultdict(gcc.deque)
     ctx._pending_triggers = gcc.defaultdict(dict)
+    ctx._verdicts = gcc.defaultdict(dict)
     for line, rid in lines_and_ids:
         ctx.raw_records[UMO].append(line)
         ctx._record_ids[UMO].append(rid)

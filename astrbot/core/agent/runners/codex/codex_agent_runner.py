@@ -38,7 +38,6 @@ from .constants import (
     CODEX_RUNNER_TYPE,
     CODEX_THREAD_STATE_KEY,
     DEFAULT_SYSTEM_PROMPT,
-    NATIVE_EXEC_SESSION_KEY,
 )
 from .native import (
     ACTIVE_TURNS,
@@ -49,7 +48,6 @@ from .native import (
     JsonObject,
     SessionBusy,
     find_code_mode_host,
-    find_codex_exe,
     session_slot,
 )
 from .tool_bridge import CodexToolBridge
@@ -100,9 +98,6 @@ def engine_options(cfg: dict) -> JsonObject:
     """Process-wide Codex options derived from the runner config."""
     codex_home = str(cfg.get("codex_home") or "") or str(_data_path() / "codex_home")
     tool_mode = cfg.get("tool_mode") or "code_mode_only"
-    # Shipyard mode keeps every file operation inside the sandbox, so Codex
-    # never gets its own shell on this host, whatever native_exec_tools says.
-    native_exec = bool(cfg.get("native_exec_tools")) and not cfg.get("shipyard_mode")
     config: JsonObject = {
         # Chat-bot defaults: no coding-assistant scaffolding in the prompt.
         "include_permissions_instructions": False,
@@ -113,7 +108,10 @@ def engine_options(cfg: dict) -> JsonObject:
         "project_doc_max_bytes": 0,
         "agents.enabled": False,
         "tools.experimental_request_user_input.enabled": False,
-        "features.shell_tool": native_exec,
+        # Codex's own execution (shell, apply_patch, view_image) is not
+        # supported in this fork: commands run in AstrBot's sandbox tools,
+        # whose results AstrBot checks before the model sees them.
+        "features.shell_tool": False,
         "web_search": "live" if cfg.get("web_search") else "disabled",
         "model_tool_mode": tool_mode,
         "features.code_mode.structured_dynamic_tool_results": True,
@@ -131,8 +129,8 @@ def engine_options(cfg: dict) -> JsonObject:
         "features.code_mode.exec_as_function_tool": bool(
             cfg.get("exec_as_function_tool")
         ),
-        "approval_policy": cfg.get("approval_policy") or "never",
-        "sandbox_mode": cfg.get("sandbox") or "read-only",
+        "approval_policy": "never",
+        "sandbox_mode": "read-only",
         # Codex reports skill invocations (by name), MCP tool calls and thread
         # metadata to chatgpt.com whenever an account is signed in. A chat bot
         # runs other people's conversations, so this is off unless the operator
@@ -157,6 +155,8 @@ def engine_options(cfg: dict) -> JsonObject:
     # connected data (mail, drive, ...). Off for every thread, and set after
     # thread_config so it cannot be turned back on.
     config["features.apps"] = False
+    # Likewise Codex's own shell: not supported here (see above).
+    config["features.shell_tool"] = False
     options: JsonObject = {"codex_home": codex_home, "config": config}
     if tool_mode in CODE_MODES:
         host = find_code_mode_host(str(cfg.get("code_mode_host") or ""))
@@ -167,25 +167,6 @@ def engine_options(cfg: dict) -> JsonObject:
                 "codex-code-mode-host not found; set code_mode_host or install Codex CLI. "
                 "code_mode_only turns will fail."
             )
-    # The executable is what gives Codex a local execution environment, which
-    # only native execution needs. Memory consolidation used to need it too;
-    # it now maintains its files through the memories extension's file tools,
-    # which run in-process.
-    if native_exec:
-        if exe := find_codex_exe(str(cfg.get("codex_self_exe") or "")):
-            options["codex_self_exe"] = exe
-        else:
-            logger.warning(
-                "No codex executable found, so native execution cannot run: "
-                "without it Codex has no local execution environment. Chat and "
-                "memory consolidation are unaffected. Set codex_self_exe, or "
-                "reinstall the binding with CODEX_ASTRBOT_WITH_CODEX=1."
-            )
-    if native_exec and (cfg.get("approval_policy") or "never") == "never":
-        # Every native command asks for approval; AstrBot answers it from the
-        # sender's permission rule (native_exec_decision).
-        options["approve_every_command"] = True
-        config.pop("approval_policy", None)
     return options
 
 
@@ -366,31 +347,6 @@ def memory_thread_config(cfg: dict, umo: str, event: T.Any) -> JsonObject:
         "memories.turn_scopes": True,
         "memories.auto_consolidate": bool(cfg.get("memory_auto_consolidate", True)),
     }
-
-
-def approvals_disabled(cfg: dict) -> bool:
-    """An explicit non-"never" approval policy with auto_approve off denies
-    every approval request, as the setting documents. With the default
-    "never" policy and native exec on, approve_every_command is used and the
-    permission rules decide instead."""
-    policy = str(cfg.get("approval_policy") or "never")
-    return policy != "never" and not cfg.get("auto_approve")
-
-
-def native_exec_decision(
-    event: T.Any, session_enabled: bool | None = None
-) -> tuple[bool, str]:
-    """Approve native execution unless this chat turned it off (K3) or the
-    sender's rule sets native_exec: false. Deciding per command keeps the
-    thread's tool set, history and prompt cache unchanged when toggled."""
-    if session_enabled is False:
-        return False, "Native command execution is turned off in this chat."
-    get_extra = getattr(event, "get_extra", None)
-    policy = get_extra(POLICY_EXTRA_KEY) if callable(get_extra) else None
-    if isinstance(policy, PermissionPolicy) and policy.native_exec is False:
-        logger.info("Codex native execution denied by rule %r", policy.rule_name)
-        return False, "Native command execution is not permitted for this user."
-    return True, ""
 
 
 def system_prompt(cfg: dict) -> str:
@@ -824,7 +780,7 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
             "cwd": cwd,
             "base_instructions": system_prompt(self.cfg),
             "dynamic_tools": self.bridge.dynamic_tools(),
-            "no_environment": not self.cfg.get("native_exec_tools"),
+            "no_environment": True,
         }
         if extra := str(self.cfg.get("developer_instructions") or "").strip():
             params["developer_instructions"] = extra
@@ -895,20 +851,6 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
 
     async def _handle_tool_call(self, msg: JsonObject) -> JsonObject:
         return await self.bridge.call(msg, self.run_context, self.agent_hooks)
-
-    async def _handle_approval(self, kind: str, msg: JsonObject) -> tuple[bool, str]:
-        """Native exec / patch approvals follow the sender's permission rule (B15)."""
-        if approvals_disabled(self.cfg):
-            return False, "Approval requests are disabled (auto_approve is off)."
-        session_setting = await sp.get_async(
-            scope="umo", scope_id=self.umo, key=NATIVE_EXEC_SESSION_KEY, default=None
-        )
-        return native_exec_decision(
-            getattr(getattr(self.run_context, "context", None), "event", None),
-            session_enabled=session_setting
-            if isinstance(session_setting, bool)
-            else None,
-        )
 
     def _turn_request(self, tools_update: list | None) -> JsonObject:
         turn_input = build_turn_input(self.req)
@@ -1038,7 +980,7 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                 self._hooked_images = set()
                 engine.saved_image_handlers[thread_id] = self._on_saved_image
                 pump = engine.pump(thread_id)
-                queue = pump.open_turn(self._handle_tool_call, self._handle_approval)
+                queue = pump.open_turn(self._handle_tool_call)
                 phases: dict[str, str | None] = {}
                 # Per agent-message item: strips citation markup the model
                 # leaks, which may be split across streamed deltas.

@@ -51,11 +51,9 @@ AGENT_RUNNER_CONFIG_DEFAULTS: dict[str, dict[str, Any]] = {
         "tool_mode": "code_mode_only",
         "code_mode_host": "",
         "exec_as_function_tool": False,
-        "native_exec_tools": False,
         # Every agent file operation happens in the Shipyard Neo sandbox;
         # Codex only orchestrates and never touches this host's files.
         "shipyard_mode": False,
-        "codex_self_exe": "",
         "web_search": False,
         # Proxy for all of Codex's traffic, including realtime voice:
         # socks5://, socks5h:// or http:// (credentials may be embedded).
@@ -72,9 +70,6 @@ AGENT_RUNNER_CONFIG_DEFAULTS: dict[str, dict[str, Any]] = {
         # model_provider_overrides).
         "model_providers": [],
         "reasoning_effort": "",
-        "sandbox": "read-only",
-        "approval_policy": "never",
-        "auto_approve": False,
         "cwd": "",
         "developer_instructions": "",
         "base_instructions": "",

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 
-from astrbot.core import logger
+from astrbot.core import content_moderation, logger
 from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.astr_main_agent import (
@@ -92,6 +92,19 @@ async def _collect_media(event: AstrMessageEvent, req: ProviderRequest) -> None:
                 elif isinstance(c, File):
                     path = await c.get_file()
                     name = c.name or os.path.basename(path)
+                    if path.lower().endswith(content_moderation.IMAGE_SUFFIXES):
+                        # The model can open it with its file tools: checked
+                        # like an image sent as one.
+                        images = (
+                            event.get_extra(
+                                content_moderation.ATTACHMENT_IMAGES_EXTRA, None
+                            )
+                            or []
+                        )
+                        event.set_extra(
+                            content_moderation.ATTACHMENT_IMAGES_EXTRA,
+                            [*images, path],
+                        )
                     req.extra_user_content_parts.append(
                         TextPart(text=f"[File Attachment: name {name}, path {path}]")
                     )
@@ -191,16 +204,7 @@ async def prepare_codex_request(
 
         req.func_tool.add_tool(ReadSkillTool())
     if not policy.is_default:
-        # Name the execution tools this request actually carries, so a sender
-        # barred from the host does not conclude that nothing can run.
-        offered = {tool.name for tool in (req.func_tool.tools if req.func_tool else [])}
-        sandbox_tools = tuple(
-            name for name in ("exec_command", "write_stdin") if name in offered
-        )
-        summary = policy.summary(
-            host_exec=bool(runner_config.get("native_exec_tools")),
-            sandbox_tools=sandbox_tools,
-        )
+        summary = policy.summary()
         if summary:
             # Per-message and append-only: the tool set and cached prefix stay the same.
             req.add_persistent_context(

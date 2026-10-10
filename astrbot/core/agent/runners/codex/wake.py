@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from astrbot.core import logger
+from astrbot.core import content_moderation, logger
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.provider.entities import ProviderRequest
@@ -195,6 +195,14 @@ async def run_codex_background_wake(
     event.message_obj.group_id = str(origin_event.get_group_id() or "")
     event.role = origin_event.role
     cfg = ctx.get_config(umo=origin_event.unified_msg_origin) or {}
+    # The result reaches the model inside the prompt, past the tool bridge
+    # that checks the results of tools run in a turn.
+    result = await content_moderation.filter_tool_text(
+        str(task_result.get("result") or ""),
+        content_moderation.platform_mode(session.platform_id),
+        label=f"background {task_result.get('tool_name', '')}",
+    )
+    task_result = {**task_result, "result": result}
     prompt = build_background_prompt(task_result, origin_event.message_str or "")
     await run_in_session_thread(
         ctx, event, cfg, prompt, origin_event.unified_msg_origin
@@ -242,6 +250,12 @@ async def run_background_exec_completion(
     from astrbot.core.cron.events import CronMessageEvent
     from astrbot.core.permission_rules import CONFIG_KEY, policy_for_event
 
+    # As a tool's result: the output reaches the model inside the prompt.
+    output = await content_moderation.filter_tool_text(
+        output,
+        content_moderation.platform_mode(session_str.split(":", 1)[0]),
+        label=f"background command {session_id}",
+    )
     prompt = build_background_exec_prompt(session_id, exit_code, output)
     try:
         session = MessageSession.from_str(session_str)

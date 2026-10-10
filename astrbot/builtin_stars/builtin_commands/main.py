@@ -89,11 +89,6 @@ class Main(star.Star):
         await self.admin_c.update_dashboard(event)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("native_exec")
-    async def native_exec(self, event: AstrMessageEvent, mode: str = "") -> None:
-        """Codex native command execution in this chat: on / off / default"""
-        await self.admin_c.native_exec(event, mode)
-
     @filter.command("set")
     async def set_variable(self, event: AstrMessageEvent, key: str, value: str) -> None:
         """Set session variable"""

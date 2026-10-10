@@ -33,7 +33,7 @@ BASE = {
     "match": [],
     "tools_deny": ["shell_*"],
     "persona_id": "p-base",
-    "native_exec": "false",
+    "global_memory": "false",
     "rate_limit": [{"window": 60, "count": 5}],
     "rate_limit_reply": "slow down",
 }
@@ -47,7 +47,7 @@ def test_unset_fields_come_from_the_parent():
     assert policy.rule_name == "grp"
     assert policy.tools_deny == ("shell_*",)
     assert policy.persona_id == "p-base"
-    assert policy.native_exec is False
+    assert policy.global_memory is False
     assert policy.rate_limits == ((60, 5),)
     assert policy.rate_limit_reply == "slow down"
     assert policy.chain == ("grp", "base")
@@ -59,14 +59,14 @@ def test_set_fields_override_the_parent():
         "match": ["p_7"],
         "inherits": "base",
         "tools_deny": ["rm"],
-        "native_exec": True,
+        "global_memory": True,
         "rate_limit": "unlimited",
     }
 
     policy = resolve_policy([BASE, child], facts(sender="7"))
 
     assert policy.tools_deny == ("rm",)
-    assert policy.native_exec is True
+    assert policy.global_memory is True
     assert policy.rate_limits == ()
     # Still inherited where the child says nothing.
     assert policy.persona_id == "p-base"

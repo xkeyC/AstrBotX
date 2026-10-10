@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import TYPE_CHECKING
 
 import astrbot.core.provider.provider as provider_core
-from astrbot.core import logger
+from astrbot.core import content_moderation, logger
 from astrbot.core.agent.runners.codex.codex_agent_runner import (
     CodexAgentRunner,
     build_turn_input,
@@ -418,6 +418,38 @@ class ThirdPartyAgentSubStage(Stage):
             await release_group_history(event)
             await refund_rate_limit(event)
             await forget_group_message(event)
+            return
+
+        # Content moderation, before anything of the message goes to Codex:
+        # a blocked message starts no turn and is steered into none.
+        try:
+            blocked = await content_moderation.check_request(
+                req.prompt or "",
+                req.extra_user_content_parts,
+                [
+                    *req.image_urls,
+                    *(
+                        event.get_extra(content_moderation.ATTACHMENT_IMAGES_EXTRA)
+                        or []
+                    ),
+                ],
+                content_moderation.platform_mode(event.get_platform_id()),
+                label=event.unified_msg_origin,
+            )
+        except BaseException:
+            await release_group_history(event)
+            await refund_rate_limit(event)
+            raise
+        if blocked:
+            # Its history goes back for the next request; the message itself
+            # never becomes history another request would send.
+            await release_group_history(event)
+            await refund_rate_limit(event)
+            await forget_group_message(event)
+            event.set_result(
+                MessageEventResult().message(content_moderation.BLOCKED_REPLY)
+            )
+            yield
             return
 
         # Same sender while a Codex turn runs: steer into that turn (after the

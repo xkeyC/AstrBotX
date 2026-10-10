@@ -54,6 +54,10 @@
         "title": "WebUI Security",
         "subtitle": "HTTPS, trusted proxy headers, login rate limits, and TOTP."
       },
+      "contentModeration": {
+        "title": "Content Moderation",
+        "subtitle": "Checks before content goes to the cloud model: service URL, thresholds, image levels and text categories. Each platform's switch is in its platform settings."
+      },
       "logs": {
         "title": "Logs",
         "subtitle": "Console logs, file logs, and Trace file logging."

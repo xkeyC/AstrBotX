@@ -60,8 +60,6 @@
     "model": "模型",
     "modelHint": "为匹配的发送者覆盖 Codex 模型。留空则使用默认模型。",
     "modelCacheWarning": "在同一会话中途切换模型会使提示词缓存失效，下一轮成本更高。",
-    "nativeExec": "本地命令执行",
-    "nativeExecHint": "仅在启用 Codex 原生执行工具时生效。",
     "globalMemory": "写入全局记忆",
     "globalMemoryHint": "该发送者的私聊是否可写入全局记忆库（仅在启用 Codex 记忆时生效）。",
     "inherits": "继承自",

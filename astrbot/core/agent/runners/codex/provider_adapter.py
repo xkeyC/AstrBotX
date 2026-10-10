@@ -20,7 +20,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from astrbot.core import logger
+from astrbot.core import content_moderation, logger
 from astrbot.core.provider.entities import LLMResponse, ToolCallsResult
 from astrbot.core.provider.provider import Provider
 from astrbot.core.provider.register import register_provider_adapter
@@ -162,6 +162,17 @@ class CodexChatProvider(Provider):
             (self._pending[cid] for cid in results if cid in self._pending), None
         )
         if pending is not None:
+            # The plugin's own tool loop (a handoff agent, tool_loop_agent):
+            # its tools' results go to the model like any tool's.
+            # Only this step's: the history repeats every earlier result.
+            mode = content_moderation.platform_mode("")
+            results = {
+                cid: await content_moderation.filter_tool_text(
+                    text, mode, "plugin tool loop"
+                )
+                for cid, text in results.items()
+                if cid in pending.futures
+            }
             for cid, fut in list(pending.futures.items()):
                 self._pending.pop(cid, None)
                 if not fut.done():
@@ -178,6 +189,47 @@ class CodexChatProvider(Provider):
                     )
             pending.futures.clear()
             return await self._drive(pending)
+        # A plugin's own model call (an image caption, a summary) sends what it
+        # was given just as a chat would; it belongs to no platform, so it is
+        # checked in full.
+        mode = content_moderation.platform_mode("")
+        if await content_moderation.check_request(
+            prompt or "",
+            extra_user_content_parts or [],
+            image_urls or [],
+            mode,
+            label="plugin model call",
+        ):
+            return LLMResponse(
+                role="err", completion_text=content_moderation.BLOCKED_REPLY
+            )
+        if contexts and mode != content_moderation.MODE_DISABLED:
+            # The history a plugin passes goes along as a transcript. As with
+            # group history, a flagged user or tool turn is left out, not the
+            # call.
+            contexts = list(contexts)
+            turns: dict[int, str] = {}
+            for i, msg in enumerate(map(_as_dict, contexts)):
+                if msg.get("role") not in ("user", "tool"):
+                    continue
+                text = _content_text(msg.get("content"))
+                if msg.get("role") == "tool":
+                    # As any tool result: the rest of a long one is cut off.
+                    short = content_moderation.cut_to_bytes(
+                        text, content_moderation.MAX_TOOL_TEXT_BYTES
+                    )
+                    if short != text:
+                        text = short
+                        contexts[i] = {
+                            **msg,
+                            "content": f"{short}\n[cut off: too long to check]",
+                        }
+                turns[i] = text
+            flags = await content_moderation.flagged_texts(
+                list(turns.values()), "plugin model call"
+            )
+            dropped = {i for i, flagged in zip(turns, flags) if flagged}
+            contexts = [raw for i, raw in enumerate(contexts) if i not in dropped]
         return await self._start(
             prompt=prompt,
             image_urls=image_urls or [],

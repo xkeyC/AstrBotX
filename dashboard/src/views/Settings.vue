@@ -768,6 +768,14 @@ const systemConfigGroups = computed(() => {
             'dashboard.auth_rate_limit.max_burst',
             'dashboard.totp.enable'
         ]),
+        createGroup('contentModeration', [
+            'content_moderation_url',
+            'content_moderation_token',
+            'content_moderation_threshold',
+            'content_moderation_nsfw_threshold',
+            'content_moderation_nsfw_labels',
+            'content_moderation_categories'
+        ]),
         createGroup('logs', [
             'log_level',
             'log_file_enable',
@@ -799,7 +807,7 @@ const networkSystemConfigGroups = computed(() => systemConfigGroups.value.filter
     group.key === 'network'
 )));
 const securitySystemConfigGroups = computed(() => systemConfigGroups.value.filter((group) => (
-    group.key === 'webuiSecurity'
+    group.key === 'webuiSecurity' || group.key === 'contentModeration'
 )));
 
 watch(

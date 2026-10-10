@@ -113,6 +113,12 @@ The default AstrBot configuration is as follows:
     "t2i_active_template": "base",
     "http_proxy": "",
     "no_proxy": ["localhost", "127.0.0.1", "::1"],
+    "content_moderation_url": "",
+    "content_moderation_token": "",
+    "content_moderation_threshold": 0.9,
+    "content_moderation_nsfw_threshold": 0.5,
+    "content_moderation_nsfw_labels": ["low", "medium", "high"],
+    "content_moderation_categories": ["violent", "illegal", "sexual", "pii", "self-harm", "unethical", "political", "copyright", "jailbreak"],
     "dashboard": {
         "enable": True,
         "username": "astrbot",
@@ -493,6 +499,30 @@ HTTP proxy. E.g., `http://localhost:7890`.
 
 List of addresses that bypass the proxy. E.g., `["localhost", "127.0.0.1"]`.
 
+### `content_moderation_url`
+
+Content moderation service URL (compatible with OpenAI's `POST /v1/moderations`). Empty: no moderation. See [Content Moderation](/use/content-moderation).
+
+### `content_moderation_token`
+
+Token for the content moderation service, sent as `Authorization: Bearer <token>`. Empty: no token.
+
+### `content_moderation_threshold`
+
+Text threshold: text is flagged when its unsafe probability (`1 - p(safe)`) is above it. Default `0.9`; lower is stricter.
+
+### `content_moderation_nsfw_threshold`
+
+Image threshold: an image is flagged when the NSFW probabilities of the selected levels add up to more than it. Default `0.5`.
+
+### `content_moderation_nsfw_labels`
+
+Image levels that count: `low` (suggestive), `medium`, `high` (explicit). All three by default; empty uses the service's own setting.
+
+### `content_moderation_categories`
+
+Text categories that are blocked: `violent`, `illegal`, `sexual`, `pii`, `self-harm`, `unethical`, `political`, `copyright`, `jailbreak`. All by default; empty means all.
+
 ### `dashboard`
 
 AstrBot WebUI configuration.
@@ -511,6 +541,8 @@ Please do not change the `password` value arbitrarily. It is an `md5` encoded pa
 > This item only takes effect in `data/cmd_config.json`; AstrBot does not read this from configuration files in the `data/config/` directory.
 
 List of configured AstrBot message platform adapter settings.
+
+Each platform's `content_moderation` sets its content moderation: `enabled` (default), `text_only` or `disabled`.
 
 ### `platform_specific`
 

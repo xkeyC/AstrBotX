@@ -60,8 +60,6 @@
     "model": "Model",
     "modelHint": "Overrides the Codex model for matching senders. Leave empty to use the default.",
     "modelCacheWarning": "Switching the model mid-thread discards the prompt cache, so the next turn costs more.",
-    "nativeExec": "Native command execution",
-    "nativeExecHint": "Only matters when native Codex exec tools are enabled.",
     "globalMemory": "Write global memory",
     "globalMemoryHint": "Whether this sender's private chats may write to the global memory store (only when Codex memories are enabled).",
     "inherits": "Inherits from",

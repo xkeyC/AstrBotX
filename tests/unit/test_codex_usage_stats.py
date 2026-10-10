@@ -112,7 +112,7 @@ class _Pump:
     def __init__(self, events):
         self.events = events
 
-    def open_turn(self, on_tool, on_approval):
+    def open_turn(self, on_tool, on_approval=None):
         queue = asyncio.Queue()
         for event in self.events:
             queue.put_nowait(event)

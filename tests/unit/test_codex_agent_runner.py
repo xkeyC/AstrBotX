@@ -305,33 +305,19 @@ def test_a_chat_provider_goes_over_the_chat_wire(tmp_path):
     assert "model_provider_options.go.files_api" not in cfg
 
 
-def test_native_exec_approvals_follow_permission_rules(tmp_path):
-    from astrbot.core.agent.runners.codex.codex_agent_runner import (
-        native_exec_decision,
-    )
-    from astrbot.core.permission_rules import EVENT_EXTRA_KEY, PermissionPolicy
-
-    opts = engine_options(
-        {"codex_home": str(tmp_path), "tool_mode": "direct", "native_exec_tools": True}
-    )
-    assert opts["approve_every_command"] is True
-    assert "approval_policy" not in opts["config"]
-    plain = engine_options({"codex_home": str(tmp_path), "tool_mode": "direct"})
-    assert "approve_every_command" not in plain
-    assert plain["config"]["approval_policy"] == "never"
-
-    def event(policy):
-        return SimpleNamespace(
-            get_extra=lambda key: policy if key == EVENT_EXTRA_KEY else None
-        )
-
-    assert native_exec_decision(event(None)) == (True, "")
-    assert native_exec_decision(event(PermissionPolicy(native_exec=True)))[0] is True
-    denied = native_exec_decision(event(PermissionPolicy(native_exec=False)))
-    assert denied[0] is False and "not permitted" in denied[1]
-    off = native_exec_decision(event(PermissionPolicy(native_exec=True)), False)
-    assert off[0] is False and "turned off" in off[1]
-    assert native_exec_decision(event(None), True) == (True, "")
+def test_codex_never_gets_its_own_execution(tmp_path):
+    """Codex's native shell / apply_patch / view_image are not supported: every
+    command runs in AstrBot's sandbox tools, whose results are moderated."""
+    for cfg in (
+        {},
+        {"native_exec_tools": True, "codex_self_exe": "codex.exe"},
+        {"thread_config": {"features.shell_tool": True}},
+    ):
+        opts = engine_options({"codex_home": str(tmp_path), **cfg})
+        assert opts["config"]["features.shell_tool"] is False
+        assert opts["config"]["approval_policy"] == "never"
+        assert "codex_self_exe" not in opts
+        assert "approve_every_command" not in opts
 
 
 def test_memory_thread_config_leaves_shared_writes_to_the_sender(tmp_path):
@@ -374,33 +360,6 @@ def test_memory_thread_config_leaves_shared_writes_to_the_sender(tmp_path):
     assert allowed.scopes == ["memory.write_global", "memory.delete"]
     assert PermissionPolicy().scopes == []
     assert PermissionPolicy(global_memory=False).scopes == []
-    exe = tmp_path / "codex.exe"
-    exe.write_bytes(b"")
-    base = {
-        "codex_home": str(tmp_path),
-        "tool_mode": "direct",
-        "codex_self_exe": str(exe),
-    }
-    # 记忆整理通过 memories 扩展的文件工具完成，进程内运行，不需要二进制。
-    assert "codex_self_exe" not in engine_options({**base, "memory_enabled": True})
-    # 原生执行仍然需要它：没有它 Codex 就没有本机执行环境。
-    assert engine_options({**base, "native_exec_tools": True})["codex_self_exe"] == str(
-        exe
-    )
-
-
-def test_auto_approve_off_denies_explicit_approval_policies():
-    from astrbot.core.agent.runners.codex.codex_agent_runner import (
-        approvals_disabled,
-    )
-
-    assert approvals_disabled({}) is False
-    assert approvals_disabled({"approval_policy": "never"}) is False
-    assert approvals_disabled({"approval_policy": "on-request"}) is True
-    assert (
-        approvals_disabled({"approval_policy": "on-request", "auto_approve": True})
-        is False
-    )
 
 
 def test_approval_is_answered_for_the_turn_it_arrived_in():
@@ -604,43 +563,6 @@ def test_thread_config_can_re_enable_analytics():
     config = engine_options({"thread_config": {"analytics.enabled": True}})["config"]
 
     assert config["analytics.enabled"] is True
-
-
-def _captured_warnings(monkeypatch, cfg):
-    """AstrBot 用 loguru，日志不走 stdlib handler，caplog 抓不到，所以直接换掉 logger。"""
-    monkeypatch.setattr(
-        "astrbot.core.agent.runners.codex.codex_agent_runner.find_codex_exe",
-        lambda _: "",
-    )
-    messages = []
-    monkeypatch.setattr(
-        "astrbot.core.agent.runners.codex.codex_agent_runner.logger",
-        SimpleNamespace(
-            warning=lambda msg, *args: messages.append(msg % args if args else msg)
-        ),
-    )
-    engine_options(cfg)
-    return "\n".join(messages)
-
-
-def test_no_codex_exe_warning_only_fires_for_native_execution(monkeypatch):
-    """记忆整理已不依赖二进制，只有原生执行还需要。"""
-    message = _captured_warnings(monkeypatch, {"native_exec_tools": True})
-
-    assert "native execution" in message
-    assert "memory consolidation are unaffected" in message
-
-
-def test_memory_alone_does_not_warn(monkeypatch):
-    """开着记忆但没有二进制是完全正常的配置，不该报警。"""
-    assert "No codex executable found" not in _captured_warnings(
-        monkeypatch, {"memory_enabled": True}
-    )
-
-
-def test_no_codex_exe_warning_is_silent_when_nothing_needs_it(monkeypatch):
-    """聊天本来就不需要这个二进制。"""
-    assert "No codex executable found" not in _captured_warnings(monkeypatch, {})
 
 
 # ============================================================

@@ -245,6 +245,31 @@ DEFAULT_CONFIG = {
     "t2i_active_template": "base",
     "http_proxy": "",
     "no_proxy": ["localhost", "127.0.0.1", "::1", "10.*", "192.168.*"],
+    # OpenAI-compatible moderation service checked before messages go to the
+    # cloud model (empty: off); each platform sets content_moderation.
+    "content_moderation_url": "",
+    # Bearer token for a moderation service that requires one (empty: none).
+    "content_moderation_token": "",
+    # Flagging thresholds sent with every check: text when 1 - p(safe) is
+    # above the first, images when their NSFW probability is above the
+    # second. Lower is stricter.
+    "content_moderation_threshold": 0.9,
+    "content_moderation_nsfw_threshold": 0.5,
+    # Image classifier labels that count as NSFW: low (suggestive: swimwear,
+    # lingerie), medium, high (explicit). None: the service's own setting.
+    "content_moderation_nsfw_labels": ["low", "medium", "high"],
+    # Text categories that are blocked (None selected: all).
+    "content_moderation_categories": [
+        "violent",
+        "illegal",
+        "sexual",
+        "pii",
+        "self-harm",
+        "unethical",
+        "political",
+        "copyright",
+        "jailbreak",
+    ],
     "dashboard": {
         "enable": True,
         "username": "astrbot",
@@ -1008,6 +1033,13 @@ CONFIG_METADATA_2 = {
                         "description": "启用",
                         "type": "bool",
                         "hint": "是否启用该适配器。未启用的适配器对应的消息平台将不会接收到消息。",
+                    },
+                    "content_moderation": {
+                        "description": "内容审核",
+                        "type": "string",
+                        "options": ["enabled", "text_only", "disabled"],
+                        "labels": ["开启", "仅文本", "关闭"],
+                        "hint": "该平台的消息发给云端模型前是否先审核（需在系统配置中填写内容审核服务地址）。仅文本：只审核文字，图片不审核。",
                     },
                     "appid": {
                         "description": "appid",
@@ -3386,20 +3418,10 @@ CONFIG_METADATA_3 = {
                         "type": "bool",
                         "hint": "供应商不支持语法约束工具（非 OpenAI 系）时开启。",
                     },
-                    "agent_runner.config.native_exec_tools": {
-                        "description": "启用 Codex 原生执行工具",
-                        "type": "bool",
-                        "hint": "开启后 Codex 可使用本机 shell / apply_patch（受沙箱约束），群聊场景不建议开启。",
-                    },
                     "agent_runner.config.shipyard_mode": {
                         "description": "Shipyard 模式（全部文件操作在沙箱内）",
                         "type": "bool",
-                        "hint": "强制使用 Shipyard Neo 沙箱执行环境，禁用 Codex 原生执行工具，skills 也从沙箱读取；Codex 只做编排，不读写本机文件。",
-                    },
-                    "agent_runner.config.codex_self_exe": {
-                        "description": "codex 可执行文件路径",
-                        "type": "string",
-                        "hint": "仅原生执行工具需要（沙箱辅助进程）。",
+                        "hint": "强制使用 Shipyard Neo 沙箱执行环境，skills 也从沙箱读取；Codex 只做编排，不读写本机文件。",
                     },
                     "agent_runner.config.web_search": {
                         "description": "启用 Codex 联网搜索",
@@ -3428,27 +3450,16 @@ CONFIG_METADATA_3 = {
                     "agent_runner.config.reasoning_effort": {
                         "description": "推理强度",
                         "type": "string",
-                        "options": ["", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
-                    },
-                    "agent_runner.config.sandbox": {
-                        "description": "沙箱模式",
-                        "type": "string",
                         "options": [
-                            "read-only",
-                            "workspace-write",
-                            "danger-full-access",
+                            "",
+                            "minimal",
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max",
+                            "ultra",
                         ],
-                        "hint": "控制 Codex 内置 shell / 文件修改能力的范围。群聊场景建议只读。",
-                    },
-                    "agent_runner.config.approval_policy": {
-                        "description": "审批策略",
-                        "type": "string",
-                        "options": ["never", "on-request", "untrusted"],
-                    },
-                    "agent_runner.config.auto_approve": {
-                        "description": "自动批准审批请求",
-                        "type": "bool",
-                        "hint": "审批策略不为 never 时生效；关闭则全部拒绝。",
                     },
                     "agent_runner.config.cwd": {
                         "description": "工作目录",
@@ -4815,6 +4826,65 @@ CONFIG_METADATA_3_SYSTEM = {
                         "description": "直连地址列表",
                         "type": "list",
                         "items": {"type": "string"},
+                    },
+                    "content_moderation_url": {
+                        "description": "内容审核服务地址",
+                        "type": "string",
+                        "hint": "兼容 OpenAI 审核接口（POST /v1/moderations）的服务地址，例如 http://127.0.0.1:17890。用户消息发给云端模型前先经它审核，被判违规的不发送并回复固定提示。留空则不审核。各平台可在平台设置中单独开启、关闭或仅审核文本。",
+                    },
+                    "content_moderation_token": {
+                        "description": "内容审核服务密钥",
+                        "type": "string",
+                        "secret": True,
+                        "hint": "审核服务开启了密钥保护时填写，以 Authorization: Bearer <密钥> 发送。留空则不带密钥。",
+                    },
+                    "content_moderation_threshold": {
+                        "description": "文字审核阈值",
+                        "type": "float",
+                        "hint": "文字的不安全概率（1 - 安全概率）高于此值即判违规，取值 0 到 1（不含 1），默认 0.9。调低更严：0.5 能多拦一些（召回约 97%），但误判正常内容也明显增多（约 10%）。",
+                    },
+                    "content_moderation_nsfw_threshold": {
+                        "description": "图片审核阈值",
+                        "type": "float",
+                        "hint": "图片的色情（NSFW）概率高于此值即判违规，取值 0 到 1（不含 1），默认 0.5。调低更严，调高更松。",
+                    },
+                    "content_moderation_nsfw_labels": {
+                        "description": "图片违规档位",
+                        "type": "list",
+                        "items": {"type": "string"},
+                        "options": ["low", "medium", "high"],
+                        "labels": ["擦边（泳装、内衣等）", "中度", "露骨"],
+                        "render_type": "checkbox",
+                        "hint": "图片分类器的哪些档位算作违规，它们的概率之和与图片审核阈值比较。默认三档都算；只想拦露骨图就取消“擦边”。全部不选时使用审核服务自己的设置。",
+                    },
+                    "content_moderation_categories": {
+                        "description": "文字拦截类别",
+                        "type": "list",
+                        "items": {"type": "string"},
+                        "options": [
+                            "violent",
+                            "illegal",
+                            "sexual",
+                            "pii",
+                            "self-harm",
+                            "unethical",
+                            "political",
+                            "copyright",
+                            "jailbreak",
+                        ],
+                        "labels": [
+                            "暴力",
+                            "非暴力违法",
+                            "色情",
+                            "隐私（打听或泄露他人信息）",
+                            "自残",
+                            "不道德",
+                            "政治敏感",
+                            "版权",
+                            "越狱（绕过模型限制）",
+                        ],
+                        "render_type": "checkbox",
+                        "hint": "文字（含图片里识别出的文字）只在被判为所选类别时才拦截。默认全部拦截。图片本身的色情判定不受此项影响，由图片阈值和档位决定。模型判为不安全但没给出类别时仍会拦截。全部不选等于全选。",
                     },
                 },
             },

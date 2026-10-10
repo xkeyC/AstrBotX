@@ -249,15 +249,6 @@
                   </template>
                 </v-combobox>
                 <v-select
-                  v-model="rule.native_exec"
-                  :items="triStateItems"
-                  :label="tm('fields.nativeExec')"
-                  :hint="tm('fields.nativeExecHint')"
-                  persistent-hint
-                  variant="outlined"
-                  density="comfortable"
-                />
-                <v-select
                   v-model="rule.global_memory"
                   :items="triStateItems"
                   :label="tm('fields.globalMemory')"
@@ -488,7 +479,6 @@ type RuleRow = {
   mcp_deny: string[]
   persona_id: string
   model: string
-  native_exec: TriState
   global_memory: TriState
   rate_mode: RateMode
   rate_limits: RateRow[]
@@ -517,7 +507,6 @@ const KNOWN_KEYS = [
   'mcp_deny',
   'persona_id',
   'model',
-  'native_exec',
   'global_memory',
   'cron_max_tasks',
   'cron_min_interval_hours'
@@ -789,7 +778,7 @@ function policyLines(rule: RuleRow | undefined): { label: string; value: string 
     return unset
   }
   const list = (key: PatternKey) => nearest((r) => r[key].join(', '), '—')
-  const tri = (key: 'native_exec' | 'global_memory') =>
+  const tri = (key: 'global_memory') =>
     nearest((r) => (r[key] === 'inherit' ? '' : triLabel(r[key])), triLabel('inherit'))
   return [
     { label: tm('tester.chain'), value: chain.map((r) => ruleLabel(r, rules.value.indexOf(r))).join(' → ') },
@@ -799,7 +788,6 @@ function policyLines(rule: RuleRow | undefined): { label: string; value: string 
     { label: tm('fields.mcpDeny'), value: list('mcp_deny') },
     { label: tm('fields.persona'), value: nearest((r) => r.persona_id, tm('fields.noOverride')) },
     { label: tm('fields.model'), value: nearest((r) => r.model, tm('fields.noOverride')) },
-    { label: tm('fields.nativeExec'), value: tri('native_exec') },
     { label: tm('fields.globalMemory'), value: tri('global_memory') },
     { label: tm('rateLimit.title'), value: nearest(rateText, tm('rateLimit.unlimited')) },
     {
@@ -825,7 +813,6 @@ function ruleSummary(rule: RuleRow): string {
   if (rule.mcp_allow.length || rule.mcp_deny.length) parts.push('MCP')
   if (rule.persona_id) parts.push(`${tm('fields.persona')}: ${rule.persona_id}`)
   if (rule.model) parts.push(`${tm('fields.model')}: ${rule.model}`)
-  if (rule.native_exec !== 'inherit') parts.push(`${tm('fields.nativeExec')}: ${triLabel(rule.native_exec)}`)
   if (rule.global_memory !== 'inherit') parts.push(`${tm('fields.globalMemory')}: ${triLabel(rule.global_memory)}`)
   if (rateText(rule)) parts.push(`${tm('rateLimit.title')}: ${rateText(rule)}`)
   if (cronText(rule.cron_max_tasks)) parts.push(`${tm('cronLimit.maxTasks')}: ${cronText(rule.cron_max_tasks)}`)
@@ -853,7 +840,6 @@ function emptyRule(): RuleRow {
     mcp_deny: [],
     persona_id: '',
     model: '',
-    native_exec: 'inherit',
     global_memory: 'inherit',
     rate_mode: 'inherit',
     rate_limits: [],
@@ -1019,7 +1005,6 @@ function normalizeRule(raw: Record<string, unknown>): RuleRow {
     mcp_deny: asList(raw.mcp_deny),
     persona_id: str(raw.persona_id),
     model: str(raw.model),
-    native_exec: toTriState(raw.native_exec),
     global_memory: toTriState(raw.global_memory),
     rate_mode: rateMode,
     rate_limits: limits.map((l) => toRateRow(l.window, l.count)),
@@ -1058,7 +1043,6 @@ function rulesPayload(rows: RuleRow[]) {
     mcp_deny: cleanList(r.mcp_deny),
     persona_id: r.persona_id || '',
     model: (r.model || '').trim(),
-    native_exec: fromTriState(r.native_exec),
     global_memory: fromTriState(r.global_memory),
     rate_limit:
       r.rate_mode === 'limit'

@@ -54,6 +54,10 @@
         "title": "WebUI 安全",
         "subtitle": "HTTPS、代理头、登录限速与 TOTP。"
       },
+      "contentModeration": {
+        "title": "内容审核",
+        "subtitle": "发给云端模型前的内容审核：服务地址、阈值、图片档位和文字类别。各平台的开关在平台设置里。"
+      },
       "logs": {
         "title": "日志",
         "subtitle": "控制台日志、文件日志和 Trace 文件日志。"

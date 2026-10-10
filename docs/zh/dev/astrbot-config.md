@@ -113,6 +113,12 @@ AstrBot 默认配置如下：
     "t2i_active_template": "base",
     "http_proxy": "",
     "no_proxy": ["localhost", "127.0.0.1", "::1"],
+    "content_moderation_url": "",
+    "content_moderation_token": "",
+    "content_moderation_threshold": 0.9,
+    "content_moderation_nsfw_threshold": 0.5,
+    "content_moderation_nsfw_labels": ["low", "medium", "high"],
+    "content_moderation_categories": ["violent", "illegal", "sexual", "pii", "self-harm", "unethical", "political", "copyright", "jailbreak"],
     "dashboard": {
         "enable": True,
         "username": "astrbot",
@@ -493,6 +499,30 @@ HTTP 代理。如 `http://localhost:7890`。
 
 不使用代理的地址列表。如 `["localhost", "127.0.0.1"]`。
 
+### `content_moderation_url`
+
+内容审核服务地址（兼容 OpenAI `POST /v1/moderations`）。留空则不审核。详见 [内容审核](/use/content-moderation)。
+
+### `content_moderation_token`
+
+内容审核服务密钥，以 `Authorization: Bearer <密钥>` 发送。留空则不带密钥。
+
+### `content_moderation_threshold`
+
+文字审核阈值：不安全概率（`1 - 安全概率`）高于此值即判违规。默认 `0.9`，调低更严。
+
+### `content_moderation_nsfw_threshold`
+
+图片审核阈值：所选档位的 NSFW 概率之和高于此值即判违规。默认 `0.5`。
+
+### `content_moderation_nsfw_labels`
+
+算作违规的图片档位：`low`（擦边）、`medium`、`high`（露骨）。默认三档都算；为空时使用审核服务自己的设置。
+
+### `content_moderation_categories`
+
+拦截的文字类别：`violent`、`illegal`、`sexual`、`pii`、`self-harm`、`unethical`、`political`、`copyright`、`jailbreak`。默认全部；为空等于全部。
+
 ### `dashboard`
 
 AstrBot WebUI 配置。
@@ -511,6 +541,8 @@ AstrBot WebUI 配置。
 > 此配置项仅在 `data/cmd_config.json` 中生效，AstrBot 不会读取 `data/config/` 目录下的配置文件中的此项。
 
 已配置的 AstrBot 消息平台适配器的配置列表。
+
+每个平台的 `content_moderation` 设置该平台的内容审核：`enabled`（默认）、`text_only`、`disabled`。
 
 ### `platform_specific`
 

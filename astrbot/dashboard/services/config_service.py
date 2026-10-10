@@ -835,6 +835,10 @@ class ConfigDisplayService:
 
         if logo_registration_tasks:
             await asyncio.gather(*logo_registration_tasks, return_exceptions=True)
+        # Content moderation applies to every platform, plugin ones included.
+        for template in platform_default_tmpl.values():
+            if isinstance(template, dict):
+                template.setdefault("content_moderation", "enabled")
 
         provider_default_tmpl = metadata["provider_group"]["metadata"]["provider"][
             "config_template"

@@ -30,18 +30,13 @@
         "tool_mode": {"description": "Tool Mode", "hint": "code_mode_only: the model orchestrates every tool through JS exec; tools load on demand, so their number does not affect the prompt or its cache (recommended)."},
         "code_mode_host": {"description": "Code Mode Host Path", "hint": "The codex-code-mode-host executable; empty uses the one shipped inside the installed binding."},
         "exec_as_function_tool": {"description": "Expose exec as a Function Tool", "hint": "Turn on for providers without grammar-constrained tools (non-OpenAI)."},
-        "native_exec_tools": {"description": "Enable Native Codex Execution Tools", "hint": "Lets Codex use the local shell and apply_patch within the sandbox. Not advisable in group chats."},
         "shipyard_mode": {"description": "Shipyard Mode (all file work in the sandbox)", "hint": "Forces the Shipyard Neo sandbox runtime, disables the native Codex execution tools and reads skills from the sandbox copy; Codex only orchestrates and never touches this host's files."},
-        "codex_self_exe": {"description": "codex Executable Path", "hint": "Needed by the native execution tools and by memory consolidation; empty uses the one shipped inside the binding, if it was included at install time."},
         "web_search": {"description": "Enable Codex Web Search"},
         "codex_home": {"description": "CODEX_HOME", "hint": "Empty uses data/codex_home (login state, config.toml, session records and memories). Separate from the local Codex CLI's ~/.codex."},
         "proxy": {"description": "Codex Proxy", "hint": "All of Codex's traffic (model requests, sign-in, realtime voice) goes through this proxy; the rest of AstrBot is unaffected. socks5://, socks5h:// or http://, e.g. socks5://127.0.0.1:7890; put credentials in the URL (socks5://user:pass@host:port). Empty connects directly or per system/environment settings."},
         "model": {"description": "Model", "hint": "Empty uses Codex's default model."},
         "model_provider": {"description": "Model Provider ID", "hint": "Custom providers are managed on the Codex page; empty uses the default."},
         "reasoning_effort": {"description": "Reasoning Effort"},
-        "sandbox": {"description": "Sandbox Mode", "hint": "Scope of Codex's built-in shell and file edits. Read-only is advisable in group chats."},
-        "approval_policy": {"description": "Approval Policy"},
-        "auto_approve": {"description": "Auto-approve Requests", "hint": "Applies when the approval policy is not never; when off, every request is denied."},
         "cwd": {"description": "Working Directory", "hint": "Empty gives each session its own data/codex_workspaces/<session>."},
         "developer_instructions": {"description": "Extra Developer Instructions"},
         "base_instructions": {"description": "System Prompt", "hint": "Replaces Codex's base instructions; empty uses AstrBot's built-in minimal chat prompt."},
@@ -571,6 +566,15 @@
         "labels": [
           "Long Connection Mode",
           "Webhook Server Mode"
+        ]
+      },
+      "content_moderation": {
+        "description": "Content Moderation",
+        "hint": "Whether this platform's messages are checked before they are sent to the cloud model (needs the content moderation service URL in the system settings). Text only: text is checked, images are not.",
+        "labels": [
+          "On",
+          "Text only",
+          "Off"
         ]
       },
       "lark_encrypt_key": {
@@ -1345,6 +1349,46 @@
       },
       "no_proxy": {
         "description": "Direct Connection Address List"
+      },
+      "content_moderation_url": {
+        "description": "Content Moderation Service URL",
+        "hint": "An OpenAI-compatible moderation service (POST /v1/moderations), e.g. http://127.0.0.1:17890. User messages are checked by it before they are sent to the cloud model; flagged ones are not sent and get a fixed reply. Empty: no moderation. Each platform can turn it on, off or text only in its settings."
+      },
+      "content_moderation_token": {
+        "description": "Content Moderation Service Token",
+        "hint": "Fill in when the moderation service requires a token; sent as Authorization: Bearer <token>. Empty: no token."
+      },
+      "content_moderation_threshold": {
+        "description": "Text Moderation Threshold",
+        "hint": "A text is flagged when its unsafe probability (1 - p(safe)) is above this value, from 0 up to (not including) 1; default 0.9. Lower is stricter: 0.5 catches more (recall ~97%) but flags much more harmless content (~10%)."
+      },
+      "content_moderation_nsfw_threshold": {
+        "description": "Image Moderation Threshold",
+        "hint": "An image is flagged when its NSFW probability is above this value, from 0 up to (not including) 1; default 0.5. Lower is stricter, higher is looser."
+      },
+      "content_moderation_nsfw_labels": {
+        "description": "Image Categories That Count",
+        "hint": "Which of the image classifier's levels count as NSFW; their probabilities add up and are compared with the image threshold. All three by default; untick Suggestive to flag only explicit images. None ticked: the moderation service's own setting.",
+        "labels": [
+          "Suggestive (swimwear, lingerie)",
+          "Medium",
+          "Explicit"
+        ]
+      },
+      "content_moderation_categories": {
+        "description": "Text Categories to Block",
+        "hint": "Text (including text read in images) is blocked only when judged unsafe for a selected category. All by default. The NSFW check of images themselves is not affected (see the image threshold and levels). Text judged unsafe without a category is still blocked. None selected means all.",
+        "labels": [
+          "Violent",
+          "Non-violent illegal acts",
+          "Sexual",
+          "Privacy (asking for or exposing someone's information)",
+          "Self-harm",
+          "Unethical",
+          "Politically sensitive",
+          "Copyright",
+          "Jailbreak (getting around the model's limits)"
+        ]
       }
     }
   },

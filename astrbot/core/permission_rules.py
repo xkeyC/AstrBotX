@@ -62,10 +62,6 @@ class PermissionPolicy:
     mcp_deny: tuple[str, ...] = ()
     persona_id: str = ""
     model: str = ""
-    # Advisory until the runner enforces it through Codex exec approvals:
-    # native execution is off by default, so this only matters when an admin
-    # enables native_exec_tools.
-    native_exec: bool | None = None
     # Consumed by the scoped memory module (may_write_global).
     global_memory: bool | None = None
     # (window seconds, max requests) pairs; every one must hold. Empty: no limit.
@@ -107,11 +103,7 @@ class PermissionPolicy:
     @property
     def is_default(self) -> bool:
         return not (
-            self.tools_allow
-            or self.tools_deny
-            or self.mcp_allow
-            or self.mcp_deny
-            or self.native_exec is False
+            self.tools_allow or self.tools_deny or self.mcp_allow or self.mcp_deny
         )
 
     def allows_tool(self, tool_name: str, mcp_server: str | None = None) -> bool:
@@ -129,15 +121,8 @@ class PermissionPolicy:
             return any(fnmatch.fnmatchcase(tool_name, p) for p in self.tools_allow)
         return True
 
-    def summary(self, *, host_exec: bool = True, sandbox_tools: tuple = ()) -> str:
+    def summary(self) -> str:
         """Short, model-facing description of the sender's restrictions.
-
-        Args:
-            host_exec: Whether commands can run on the bot host at all. With
-                the native execution tools off there is nothing to restrict,
-                so the clause is left out instead of suggesting otherwise.
-            sandbox_tools: Execution tools that still work for this sender,
-                named so the model reaches for them instead of giving up.
 
         Returns:
             One line, or an empty string when nothing is restricted.
@@ -151,13 +136,6 @@ class PermissionPolicy:
             parts.append("allowed MCP servers: " + ", ".join(self.mcp_allow))
         if self.mcp_deny:
             parts.append("denied MCP servers: " + ", ".join(self.mcp_deny))
-        if self.native_exec is False and host_exec:
-            clause = "no command execution on the bot host"
-            if sandbox_tools:
-                clause += (
-                    " (the sandbox is unaffected: use " + ", ".join(sandbox_tools) + ")"
-                )
-            parts.append(clause)
         return "; ".join(parts)
 
 
@@ -308,7 +286,6 @@ def policy_from_rule(rule: dict, rules: list[dict] | None) -> PermissionPolicy:
         mcp_deny=names("mcp_deny"),
         persona_id=text("persona_id"),
         model=text("model"),
-        native_exec=switch("native_exec"),
         global_memory=switch("global_memory"),
         rate_limits=rate_limits or (),
         rate_limit_reply=text("rate_limit_reply"),

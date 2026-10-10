@@ -11,6 +11,7 @@ from pydantic.dataclasses import dataclass
 
 import astrbot.core.message.components as Comp
 from astrbot.api import logger
+from astrbot.core import content_moderation
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
@@ -548,6 +549,18 @@ class GetGroupMessageHistoryTool(FunctionTool[AstrAgentContext]):
 
         has_more = len(matched) > limit
         messages = matched[-limit:]
+        # As in the group history given with a request: a flagged message is
+        # left out, the rest still goes (the tool bridge would otherwise drop
+        # the whole result for it).
+        if messages and (
+            content_moderation.platform_mode(str(event.get_platform_id() or ""))
+            != content_moderation.MODE_DISABLED
+        ):
+            flags = await content_moderation.flagged_texts(
+                [f"{m['sender']}: {m['text']}" for m in messages],
+                event.unified_msg_origin,
+            )
+            messages = [m for m, flagged in zip(messages, flags) if not flagged]
         output = io.StringIO()
         writer = csv.DictWriter(
             output,

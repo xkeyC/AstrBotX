@@ -16,7 +16,7 @@ from mcp.types import (
     TextResourceContents,
 )
 
-from astrbot.core import logger
+from astrbot.core import content_moderation, logger
 from astrbot.core.agent.hooks import BaseAgentRunHooks
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolSet
@@ -310,6 +310,15 @@ class CodexToolBridge:
 
         if not items:
             items = [{"type": "inputText", "text": "The tool returned no content."}]
+        # What a tool read (a file, an image, a page) goes to the cloud model
+        # like a message: flagged parts are removed and the model is told.
+        get_platform_id = getattr(event, "get_platform_id", None)
+        platform_id = get_platform_id() if callable(get_platform_id) else ""
+        items = await content_moderation.filter_tool_result(
+            items,
+            content_moderation.platform_mode(str(platform_id or "")),
+            label=f"{tool.name}, {getattr(event, 'unified_msg_origin', '')}",
+        )
         return {"contentItems": items, "success": success}
 
 

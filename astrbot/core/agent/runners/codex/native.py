@@ -59,13 +59,6 @@ def bundled_executable(name: str) -> str | None:
     return find(name)
 
 
-def find_codex_exe(explicit: str = "") -> str | None:
-    """`codex` executable for sandboxed exec / memory consolidation."""
-    if explicit:
-        return explicit if Path(explicit).is_file() else None
-    return bundled_executable("codex")
-
-
 def find_code_mode_host(explicit: str = "") -> str | None:
     """Locate codex-code-mode-host: explicit path, the one bundled with the
     binding (matches its protocol), next to `codex` on PATH, or none."""
