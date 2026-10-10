@@ -1371,6 +1371,10 @@
         "description": "内容审核服务密钥",
         "hint": "审核服务开启了密钥保护时填写，以 Authorization: Bearer <密钥> 发送。留空则不带密钥。"
       },
+      "content_moderation_blocked_reply": {
+        "description": "拦截提示语",
+        "hint": "用户消息被审核拦截时机器人回复的话。留空则使用“这条内容无法处理。”。"
+      },
       "content_moderation_threshold": {
         "description": "文字审核阈值",
         "hint": "文字的不安全概率（1 - 安全概率）高于此值即判违规，取值 0 到 1（不含 1），默认 0.9。调低更严：0.5 能多拦一些（召回约 97%），但误判正常内容也明显增多（约 10%）。"

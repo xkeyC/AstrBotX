@@ -115,6 +115,7 @@ The default AstrBot configuration is as follows:
     "no_proxy": ["localhost", "127.0.0.1", "::1"],
     "content_moderation_url": "",
     "content_moderation_token": "",
+    "content_moderation_blocked_reply": "这条内容无法处理。",
     "content_moderation_threshold": 0.9,
     "content_moderation_nsfw_threshold": 0.5,
     "content_moderation_nsfw_labels": ["low", "medium", "high"],
@@ -506,6 +507,10 @@ Content moderation service URL (compatible with OpenAI's `POST /v1/moderations`)
 ### `content_moderation_token`
 
 Token for the content moderation service, sent as `Authorization: Bearer <token>`. Empty: no token.
+
+### `content_moderation_blocked_reply`
+
+What the bot replies when a user's message is blocked. Default `这条内容无法处理。`, also used when empty.
 
 ### `content_moderation_threshold`
 

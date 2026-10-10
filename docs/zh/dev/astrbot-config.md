@@ -115,6 +115,7 @@ AstrBot 默认配置如下：
     "no_proxy": ["localhost", "127.0.0.1", "::1"],
     "content_moderation_url": "",
     "content_moderation_token": "",
+    "content_moderation_blocked_reply": "这条内容无法处理。",
     "content_moderation_threshold": 0.9,
     "content_moderation_nsfw_threshold": 0.5,
     "content_moderation_nsfw_labels": ["low", "medium", "high"],
@@ -506,6 +507,10 @@ HTTP 代理。如 `http://localhost:7890`。
 ### `content_moderation_token`
 
 内容审核服务密钥，以 `Authorization: Bearer <密钥>` 发送。留空则不带密钥。
+
+### `content_moderation_blocked_reply`
+
+用户消息被审核拦截时的回复。默认 `这条内容无法处理。`；留空时也使用它。
 
 ### `content_moderation_threshold`
 

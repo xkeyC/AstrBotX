@@ -447,7 +447,7 @@ class ThirdPartyAgentSubStage(Stage):
             await refund_rate_limit(event)
             await forget_group_message(event)
             event.set_result(
-                MessageEventResult().message(content_moderation.BLOCKED_REPLY)
+                MessageEventResult().message(content_moderation.blocked_reply())
             )
             yield
             return

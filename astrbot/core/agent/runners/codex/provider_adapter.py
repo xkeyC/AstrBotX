@@ -201,7 +201,7 @@ class CodexChatProvider(Provider):
             label="plugin model call",
         ):
             return LLMResponse(
-                role="err", completion_text=content_moderation.BLOCKED_REPLY
+                role="err", completion_text=content_moderation.blocked_reply()
             )
         if contexts and mode != content_moderation.MODE_DISABLED:
             # The history a plugin passes goes along as a transcript. As with

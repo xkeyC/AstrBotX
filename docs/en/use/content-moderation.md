@@ -14,7 +14,7 @@ When enabled, AstrBot checks what it hands to the cloud model (Codex) with a ser
 
 | Content | When flagged |
 | --- | --- |
-| The user's message: text, images, images sent as files, the quoted message | The whole message is not given to the model; the bot replies "这条内容无法处理。" |
+| The user's message: text, images, images sent as files, the quoted message | The whole message is not given to the model; the bot replies with the Reply When Blocked setting (default "这条内容无法处理。") |
 | Group chat context (earlier group messages) | Only the flagged messages are left out; the rest still goes |
 | Group messages read by the `get_group_message_history` tool | Same: only the flagged messages are left out |
 | Tool results: file reads, image reads, web / MCP / plugin tools, sandbox output, results of background tasks and commands | Only the flagged text parts or images are removed, and the model is told what was removed and why |

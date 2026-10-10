@@ -1358,6 +1358,10 @@
         "description": "Content Moderation Service Token",
         "hint": "Fill in when the moderation service requires a token; sent as Authorization: Bearer <token>. Empty: no token."
       },
+      "content_moderation_blocked_reply": {
+        "description": "Reply When Blocked",
+        "hint": "What the bot replies when a user's message is blocked by moderation. Empty: “这条内容无法处理。”."
+      },
       "content_moderation_threshold": {
         "description": "Text Moderation Threshold",
         "hint": "A text is flagged when its unsafe probability (1 - p(safe)) is above this value, from 0 up to (not including) 1; default 0.9. Lower is stricter: 0.5 catches more (recall ~97%) but flags much more harmless content (~10%)."

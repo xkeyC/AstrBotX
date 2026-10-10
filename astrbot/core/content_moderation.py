@@ -25,7 +25,8 @@ from astrbot.core import astrbot_config, logger
 MODE_ENABLED = "enabled"
 MODE_TEXT_ONLY = "text_only"
 MODE_DISABLED = "disabled"
-#: Replied instead of an answer when the message was blocked.
+#: Replied instead of an answer when the message was blocked, unless the
+#: system setting content_moderation_blocked_reply says otherwise.
 BLOCKED_REPLY = "这条内容无法处理。"
 
 TEXT_TIMEOUT_S = 5.0
@@ -127,6 +128,13 @@ def _pieces(text: str, max_bytes: int) -> list[str]:
         used += size
     pieces.append(text[start:])
     return pieces
+
+
+def blocked_reply() -> str:
+    """What a blocked message is answered with (the system setting, or
+    ``BLOCKED_REPLY`` when it is empty)."""
+    reply = str(astrbot_config.get("content_moderation_blocked_reply") or "").strip()
+    return reply or BLOCKED_REPLY
 
 
 def service_url() -> str:

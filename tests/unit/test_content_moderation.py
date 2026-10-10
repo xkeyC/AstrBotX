@@ -1193,3 +1193,39 @@ async def test_a_token_is_sent_when_set(service):
     await cm.flagged_texts(["a"])
 
     assert service.auth == [None, "Bearer s3cret"]
+
+
+def test_the_blocked_reply_can_be_set(monkeypatch):
+    monkeypatch.setattr(cm, "astrbot_config", {})
+    assert cm.blocked_reply() == cm.BLOCKED_REPLY
+    monkeypatch.setattr(
+        cm, "astrbot_config", {"content_moderation_blocked_reply": "  "}
+    )
+    assert cm.blocked_reply() == cm.BLOCKED_REPLY
+    monkeypatch.setattr(
+        cm, "astrbot_config", {"content_moderation_blocked_reply": "换个说法试试吧"}
+    )
+    assert cm.blocked_reply() == "换个说法试试吧"
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_message_gets_the_configured_reply(monkeypatch):
+    from tests.unit.test_third_party_agent_sub_stage import _process_with
+
+    from astrbot.core.pipeline.process_stage.method.agent_sub_stages import (
+        third_party,
+    )
+
+    monkeypatch.setattr(
+        third_party.content_moderation,
+        "check_request",
+        AsyncMock(return_value=["violent"]),
+    )
+    monkeypatch.setattr(
+        third_party.content_moderation, "blocked_reply", lambda: "不行哦"
+    )
+
+    *_, event, _runner, _ = await _process_with(monkeypatch)
+
+    [result] = event.set_result.call_args.args
+    assert result.get_plain_text() == "不行哦"

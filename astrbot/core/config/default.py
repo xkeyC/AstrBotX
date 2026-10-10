@@ -250,6 +250,8 @@ DEFAULT_CONFIG = {
     "content_moderation_url": "",
     # Bearer token for a moderation service that requires one (empty: none).
     "content_moderation_token": "",
+    # Reply to a blocked message (empty: the built-in one).
+    "content_moderation_blocked_reply": "这条内容无法处理。",
     # Flagging thresholds sent with every check: text when 1 - p(safe) is
     # above the first, images when their NSFW probability is above the
     # second. Lower is stricter.
@@ -4837,6 +4839,11 @@ CONFIG_METADATA_3_SYSTEM = {
                         "type": "string",
                         "secret": True,
                         "hint": "审核服务开启了密钥保护时填写，以 Authorization: Bearer <密钥> 发送。留空则不带密钥。",
+                    },
+                    "content_moderation_blocked_reply": {
+                        "description": "拦截提示语",
+                        "type": "string",
+                        "hint": "用户消息被审核拦截时机器人回复的话。留空则使用“这条内容无法处理。”。",
                     },
                     "content_moderation_threshold": {
                         "description": "文字审核阈值",

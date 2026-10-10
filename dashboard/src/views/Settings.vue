@@ -771,6 +771,7 @@ const systemConfigGroups = computed(() => {
         createGroup('contentModeration', [
             'content_moderation_url',
             'content_moderation_token',
+            'content_moderation_blocked_reply',
             'content_moderation_threshold',
             'content_moderation_nsfw_threshold',
             'content_moderation_nsfw_labels',
