@@ -34,6 +34,7 @@ from aiortc import MediaStreamTrack
 from aiortc.mediastreams import MediaStreamError
 
 from astrbot import logger
+from astrbot.core import content_moderation
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from . import session as voice
@@ -389,6 +390,7 @@ class InfraVoiceSession(VoiceSession):
             session["tts_emotion"] = emotion
             session["tts_emotion_strength"] = float(settings["emotion_strength"])
         session["tts_stream_text"] = bool(settings["stream_text"])
+        session["moderation"] = self._moderation()
         config = {
             **{
                 key: value
@@ -443,6 +445,26 @@ class InfraVoiceSession(VoiceSession):
             ],
             "no_environment": True,
             "config": config,
+        }
+
+    def _moderation(self) -> dict:
+        """How the voice server checks what it hears before the voice model
+        gets it: the content moderation of the paired chat's platform, text
+        only (what is heard is text). A flagged utterance reaches the model
+        without its words; one that wants a reply comes with the blocked
+        reply for the model to say.
+
+        Returns:
+            The server's ``moderation`` session setting.
+        """
+        mode = content_moderation.platform_mode(self.chat.umo.split(":", 1)[0])
+        if mode == content_moderation.MODE_DISABLED:
+            return {"enabled": False}
+        options = content_moderation.check_options()
+        return {
+            "enabled": True,
+            **{k: options[k] for k in ("threshold", "categories") if k in options},
+            "reply": content_moderation.blocked_reply(),
         }
 
     def _tool_handler(self):
@@ -807,6 +829,22 @@ class InfraVoiceSession(VoiceSession):
         )
         await self._wait_open(started, START_TIMEOUT)
         self._phase("voice server session started")
+        # A thread still loaded keeps the session settings it was loaded
+        # with: the moderation setting goes again, as it is now (on or off),
+        # before any audio goes.
+        try:
+            await engine.rt.realtime_append_text(
+                self._thread_id,
+                json.dumps({"moderation": self._moderation()}),
+                "voice_session",
+            )
+        except Exception as exc:  # noqa: BLE001 - the conversation goes on
+            logger.warning(
+                "%s voice %s: moderation setting not given: %s",
+                self.label,
+                self.key,
+                exc,
+            )
         self._spawn(self.media.play(self._track), "outbound")
         self._spawn(self._send(), "send")
         self._spawn(self._give_labels(), "speakers")

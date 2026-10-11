@@ -266,3 +266,27 @@ def test_voice_memories_fail_closed(monkeypatch):
     monkeypatch.setattr(star_context, "_current", Broken())
     chat = VoiceChat(umo="qq:FriendMessage:42", private=True, sender_id="42")
     assert chat.memory_config() == {}
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_voice_request_starts_no_turn(turns, monkeypatch):
+    from astrbot.core import content_moderation as cm
+
+    seen, _ = turns
+    checked = []
+
+    async def check_request(prompt, extra_parts, image_urls, mode, label=""):
+        checked.append((prompt, mode))
+        return ["violent"] if "bad" in prompt else []
+
+    monkeypatch.setattr(cm, "check_request", check_request)
+    monkeypatch.setattr(cm, "platform_mode", lambda platform: f"mode:{platform}")
+    monkeypatch.setattr(cm, "blocked_reply", lambda: "blocked")
+    chat = VoiceChat(umo="mumble:GroupMessage:server", private=False)
+    # Checked as the platform's messages are; the voice model tells the
+    # blocked reply.
+    assert await chat.ask("What was said: bad. Task: bad") == "blocked"
+    assert not seen
+    assert checked == [("What was said: bad. Task: bad", "mode:mumble")]
+    assert await chat.ask("Task: fine") == "answer"
+    assert len(seen) == 1

@@ -1,7 +1,10 @@
 """Audio between Mumble (Opus, one stream per speaker) and a WebRTC peer.
 
 Inbound: each speaker's Opus frames are decoded and mixed into one 48 kHz
-mono stream, served to aiortc as a track at real-time pace. Outbound: the
+mono stream, served to aiortc as a track at real-time pace. Mumble sends
+every speaker's voice on its own (what lights their talking indicator), so
+the mixer knows who is in each frame: it reports each speaker's stretches of
+speech on its own clock (``on_speech``), for speaker labels. Outbound: the
 peer's audio is resampled to 48 kHz mono, cut into 20 ms frames, Opus
 encoded and handed to Mumble while there is sound, ending each stretch of
 speech with a terminator frame.
@@ -47,6 +50,17 @@ PREROLL_FRAMES = 2
 # Buffered audio beyond this is dropped, oldest first, to bound latency.
 MAX_QUEUED_FRAMES = 150  # 3 s
 FRAME_SECONDS = FRAME_SAMPLES / SAMPLE_RATE
+# A speaker's frame is their speech, for speaker labels, when it is this
+# loud (int16 RMS, about -50 dBFS: a quiet voice still counts, a suppressed
+# open microphone does not) and within SPEECH_SHARE of the frame's loudest
+# speaker (-18 dB: someone's hiss under another's voice does not). A voice
+# no label covers costs its utterance the voice server's wait for one (0.5
+# s) and is told as "[unknown speaker]".
+SPEECH_RMS = 100
+SPEECH_SHARE = 1 / 8
+# A speaker's stretch of speech goes on through this many frames of theirs
+# that are quiet or missing, then ends.
+SPEECH_HOLD_FRAMES = 25  # 500 ms
 
 
 class InboundMixer:
@@ -68,6 +82,16 @@ class InboundMixer:
         self._ended: set[int] = set()
         self.last_voice_at = 0.0
         self.holding = True
+        # The mixer's clock: the sample index where the next mixed frame
+        # starts (only mixed frames count), and that of the frame ``pull``
+        # returned last (None: none), which ``FrameTrack`` reports as ``pos``.
+        self._clock = 0
+        self.pulled_pos: int | None = None
+        # Called with ``(speaker, start, end, final)`` as a speaker's stretch
+        # of speech grows (each frame) and when it ends, on the mixer's clock.
+        self.on_speech: Callable[[int, int, int, bool], None] | None = None
+        # Each speaker's stretch going on: [start, end, quiet frames since].
+        self._speech: dict[int, list[int]] = {}
 
     def feed(self, speaker: int, opus_data: bytes, is_terminator: bool) -> None:
         """Decodes one frame from ``speaker`` into its pending samples.
@@ -114,6 +138,7 @@ class InboundMixer:
         self._pending_samples.pop(speaker, None)
         self._playing.discard(speaker)
         self._ended.discard(speaker)
+        self._speech.pop(speaker, None)
 
     def clear(self) -> None:
         self._decoders.clear()
@@ -121,13 +146,16 @@ class InboundMixer:
         self._pending_samples.clear()
         self._playing.clear()
         self._ended.clear()
+        self._speech.clear()
 
     def pull(self) -> bytes | None:
         """One mixed 20 ms frame, or ``None`` when nobody is talking."""
-        if self.holding or not self._pending:
+        if self.holding:
             return None
         mix = np.zeros(FRAME_SAMPLES, dtype=np.int32)
         mixed = False
+        # Each mixed speaker's loudness in this frame.
+        loudness: dict[int, float] = {}
         for speaker in list(self._pending):
             chunks = self._pending[speaker]
             available = self._pending_samples.get(speaker, 0)
@@ -141,20 +169,53 @@ class InboundMixer:
                 continue
             mixed = True
             filled = 0
+            own = np.zeros(FRAME_SAMPLES, dtype=np.int32)
             while chunks and filled < FRAME_SAMPLES:
                 chunk = chunks[0]
                 take = min(FRAME_SAMPLES - filled, len(chunk))
-                mix[filled : filled + take] += chunk[:take]
+                own[filled : filled + take] = chunk[:take]
                 filled += take
                 if take == len(chunk):
                     chunks.popleft()
                 else:
                     chunks[0] = chunk[take:]
+            mix += own
+            loudness[speaker] = float(np.sqrt(np.mean(own.astype(np.float64) ** 2)))
             self._pending_samples[speaker] -= filled
             if not chunks:
                 del self._pending[speaker]
                 del self._pending_samples[speaker]
                 self._playing.discard(speaker)
+        self.pulled_pos = self._clock if mixed else None
+        if mixed:
+            self._clock += FRAME_SAMPLES
+        # Who speaks: a voiced frame starts or extends its speaker's stretch,
+        # a stretch quiet for SPEECH_HOLD_FRAMES ends.
+        if self.on_speech is not None:
+            loudest = max(loudness.values(), default=0.0)
+            voiced = [
+                speaker
+                for speaker, rms in loudness.items()
+                if rms >= SPEECH_RMS and rms >= loudest * SPEECH_SHARE
+            ]
+            for speaker in voiced:
+                stretch = self._speech.get(speaker)
+                if stretch is None:
+                    # Labels are keyed by their start: two speakers starting
+                    # in the same frame start a sample apart.
+                    start = self.pulled_pos
+                    while any(s[0] == start for s in self._speech.values()):
+                        start += 1
+                    stretch = self._speech[speaker] = [start, 0, 0]
+                stretch[1], stretch[2] = self._clock, 0
+                self.on_speech(speaker, stretch[0], stretch[1], False)
+            for speaker, stretch in list(self._speech.items()):
+                if speaker in voiced:
+                    continue
+                stretch[2] += 1
+                if stretch[2] >= SPEECH_HOLD_FRAMES:
+                    del self._speech[speaker]
+                    self.on_speech(speaker, stretch[0], stretch[1], True)
         if not mixed:
             return None
         return np.clip(mix, -32768, 32767).astype(np.int16).tobytes()

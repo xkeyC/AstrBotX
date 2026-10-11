@@ -207,3 +207,74 @@ def test_media_flush():
     media.outbound._queue.extend([(b"x", True)] * 10)
     media.flush()
     assert not media.outbound._queue
+
+
+def test_mixer_reports_who_speaks_on_its_clock():
+    mixer = InboundMixer()
+    mixer.holding = False
+    spans = []
+    mixer.on_speech = lambda *span: spans.append(span)
+    for packet in encode(tone(10)):
+        mixer.feed(1, packet, False)
+    # A quiet open microphone is no speech.
+    for packet in encode(tone(10, amplitude=50.0, freq=220.0)):
+        mixer.feed(2, packet, False)
+    positions = []
+    while mixer.pull() is not None:
+        positions.append(mixer.pulled_pos)
+    # Frames are numbered on the mixer's own clock (mixed frames only).
+    assert positions == [i * FRAME_SAMPLES for i in range(len(positions))]
+    assert mixer.pulled_pos is None
+    assert {span[0] for span in spans} == {1}
+    first, last = spans[0], spans[-1]
+    assert first[1] == 0 and first[3] is False
+    assert last[3] is False and last[2] <= len(positions) * FRAME_SAMPLES
+    # Quiet for the hold: the stretch ends, once.
+    for _ in range(audio.SPEECH_HOLD_FRAMES):
+        assert mixer.pull() is None
+    assert spans[-1] == (1, 0, last[2], True)
+    assert sum(1 for span in spans if span[3]) == 1
+    # Speaking again starts a new stretch where the clock is.
+    for packet in encode(tone(5)):
+        mixer.feed(1, packet, False)
+    while mixer.pull() is not None:
+        pass
+    assert spans[-1][1] == len(positions) * FRAME_SAMPLES
+
+
+def test_speakers_starting_together_get_their_own_stretches():
+    mixer = InboundMixer()
+    mixer.holding = False
+    starts = {}
+    mixer.on_speech = lambda speaker, start, end, final: starts.setdefault(
+        speaker, start
+    )
+    for packet in encode(tone(5)):
+        mixer.feed(1, packet, False)
+    for packet in encode(tone(5, freq=220.0)):
+        mixer.feed(2, packet, False)
+    while mixer.pull() is not None:
+        pass
+    # Labels are keyed by their start: no two stretches share one.
+    assert set(starts) == {1, 2}
+    assert starts[1] != starts[2]
+
+
+def test_a_quiet_voice_is_labelled_unless_under_a_loud_one():
+    def speakers(feeds) -> set[int]:
+        mixer = InboundMixer()
+        mixer.holding = False
+        seen = set()
+        mixer.on_speech = lambda speaker, *_: seen.add(speaker)
+        for speaker, pcm in feeds:
+            for packet in encode(pcm):
+                mixer.feed(speaker, packet, False)
+        while mixer.pull() is not None:
+            pass
+        return seen
+
+    quiet = tone(10, amplitude=200.0, freq=220.0)  # RMS ~140, about -47 dBFS
+    # Alone, a quiet voice is speech.
+    assert speakers([(2, quiet)]) == {2}
+    # Under a loud voice, the same level (an open microphone) is not.
+    assert speakers([(1, tone(10)), (2, quiet)]) == {1}

@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from astrbot import logger
+from astrbot.core import content_moderation
 from astrbot.core.message.message_event_result import MessageChain
 
 if TYPE_CHECKING:
@@ -272,7 +273,8 @@ class VoiceChat:
                 the agent, nothing more.
 
         Returns:
-            The answer (empty when the turn ended without one), or None when
+            The answer (empty when the turn ended without one; the blocked
+            reply when content moderation blocked the request), or None when
             the turn was stopped, refused (a full queue), failed or the core
             is not up.
         """
@@ -284,6 +286,16 @@ class VoiceChat:
         if ctx is None:
             logger.warning("Voice: no core context, a request is not answered")
             return None
+        # Content moderation, as for a message of the chat: a blocked request
+        # starts no turn, and the voice model tells the blocked reply.
+        if await content_moderation.check_request(
+            body,
+            [],
+            [],
+            content_moderation.platform_mode(self.umo.split(":", 1)[0]),
+            label=f"{self.umo} (voice)",
+        ):
+            return content_moderation.blocked_reply()
         sender_name = self.sender_name if self.private else VOICE_SENDER_NAME
         if speaker and not self.private:
             # Only a guess, which can be wrong: the turn still runs as the

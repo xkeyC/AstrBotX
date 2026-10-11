@@ -499,19 +499,21 @@ class MumblePlatformAdapter(Platform):
             def send(frame: bytes, terminator: bool) -> None:
                 self._send_voice(frame, target, terminator)
 
+        media = MumbleMedia(send, self._voice_bitrate())
         # The realtime backend is a setting of the Codex runner.
         session = new_voice_session(
             key=key,
             scope_id=f"{self.meta().id}:voice:{key}",
             prompt=prompt,
             options=self.voice_options,
-            media=MumbleMedia(send, self._voice_bitrate()),
+            media=media,
             on_closed=self._voice_closed,
             label="Mumble",
             thread_key="mumble_voice_thread",
             # The chat that runs what is asked by voice: the server group (as
-            # the fixed voice user, a member: speakers cannot be told apart),
-            # or the whisperer's private chat (as the whisperer).
+            # the fixed voice user, a member: who spoke is only named, and a
+            # name grants nothing), or the whisperer's private chat (as the
+            # whisperer).
             chat=(
                 VoiceChat(
                     umo=f"{self.meta().id}:{MessageType.GROUP_MESSAGE.value}:{SERVER_SESSION}",
@@ -531,6 +533,14 @@ class MumblePlatformAdapter(Platform):
         self.voice_sessions[key] = session
         if key == SERVER_SESSION:
             self._spawn(session.set_people(self._channel_others()))
+
+            # Who said what: Mumble sends each speaker's voice on its own,
+            # so the channel's labels are their names (a whisper has one).
+            def speech(speaker: int, start: int, end: int, final: bool) -> None:
+                user = self.client.users.get(speaker)
+                session.label_speaker(user.name if user else None, start, end, final)
+
+            media.mixer.on_speech = speech
 
         def failed(exc: Exception) -> None:
             logger.error("Mumble voice session %s failed to start: %s", key, exc)

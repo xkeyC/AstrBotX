@@ -215,6 +215,15 @@ def engine(monkeypatch, voice_db):
     return engine
 
 
+def given(engine, key: str) -> list[tuple[str, str]]:
+    """The session settings given to the voice server that set ``key``."""
+    return [
+        (text, role)
+        for text, role in engine.rt.texts
+        if role == "voice_session" and key in json.loads(text)
+    ]
+
+
 def told(engine, role: str) -> list[str]:
     """The texts given to the realtime conversation in ``role``."""
     return [text for text, r in engine.rt.texts if r == role]
@@ -352,6 +361,8 @@ async def test_the_voice_thread_talks_on_the_chosen_model(engine):
         "tts_emotion": "happy",
         "tts_emotion_strength": 0.5,
         "tts_stream_text": True,
+        # Content moderation is off (no service set).
+        "moderation": {"enabled": False},
     }
     assert "realtime.local_infra.ref_text" not in config
     assert config["model_provider"] == "deepseek"
@@ -415,15 +426,13 @@ async def test_a_backend_task_runs_in_the_chat_and_its_answer_is_told(engine):
     )
     assert result["success"] is True
     assert "later" in result["contentItems"][0]["text"]
-    await eventually(lambda: engine.rt.texts)
+    await eventually(lambda: told(engine, "developer"))
     assert t.chat.asked == [
         chat_module.TASK_BODY.format(heard="what time is it", task="Tell the time")
     ]
-    text, role = engine.rt.texts[0]
-    assert text == infra_module.RESULT_PROMPT.format(
-        task="Tell the time", answer="It is three."
-    )
-    assert role == "developer"
+    assert told(engine, "developer") == [
+        infra_module.RESULT_PROMPT.format(task="Tell the time", answer="It is three.")
+    ]
     unknown = await t.pump.tool_handler({"tool": "shell", "arguments": {}})
     assert unknown["success"] is False
     await t.session.close("done")
@@ -970,13 +979,13 @@ async def test_the_room_size_sets_what_the_voice_server_passes_on(engine):
     await engine.pumps["t1"].queue.put({"type": "realtime_conversation_started"})
     await eventually(lambda: t.session.ready)
     # Given again once up (the thread's settings may be older).
-    assert engine.rt.texts == [(json.dumps({"wake": True}), "voice_session")]
+    assert given(engine, "wake") == [(json.dumps({"wake": True}), "voice_session")]
     # One left: everything, at once; the same again is not repeated.
     await t.session.set_people(1)
     await t.session.set_people(1)
     # Not known: only what calls the bot again.
     await t.session.set_people(None)
-    assert engine.rt.texts == [
+    assert given(engine, "wake") == [
         (json.dumps({"wake": True}), "voice_session"),
         (json.dumps({"wake": False}), "voice_session"),
         (json.dumps({"wake": True}), "voice_session"),
@@ -1015,7 +1024,7 @@ async def test_wake_mode_overrides_the_headcount(engine, mode, people, wake):
     for n in people[1:]:
         await t.session.set_people(n)
     # The same setting all along: given once, once the server is up.
-    assert engine.rt.texts == [(json.dumps({"wake": wake[0]}), "voice_session")]
+    assert given(engine, "wake") == [(json.dumps({"wake": wake[0]}), "voice_session")]
     await t.session.close("done")
 
 
@@ -1039,7 +1048,7 @@ async def test_people_changing_while_it_starts_reach_the_voice_server(engine):
     await t.session.set_people(1)
     await engine.pumps["t1"].queue.put({"type": "realtime_conversation_started"})
     await eventually(lambda: engine.rt.texts)
-    assert engine.rt.texts == [(json.dumps({"wake": False}), "voice_session")]
+    assert given(engine, "wake") == [(json.dumps({"wake": False}), "voice_session")]
     await t.session.close("done")
 
 
@@ -1353,3 +1362,59 @@ def test_codex_realtime_takes_no_speaker_labels(monkeypatch):
         on_wake=lambda source: None,
     )
     assert session.label_speaker("Alice", 0, 960, True, bearing_deg=3.0) is None
+
+
+@pytest.mark.asyncio
+async def test_the_voice_server_checks_what_it_hears_as_the_platform_says(
+    engine, monkeypatch
+):
+    from astrbot.core import content_moderation as cm
+
+    config = {
+        "content_moderation_url": "http://127.0.0.1:17890",
+        "content_moderation_threshold": 0.8,
+        "content_moderation_nsfw_threshold": 0.4,
+        "content_moderation_categories": ["violent", "pii"],
+        "content_moderation_blocked_reply": "不行。",
+        "platform": [{"id": "test", "content_moderation": "text_only"}],
+    }
+    monkeypatch.setattr(cm, "astrbot_config", config)
+    t = await open_session(engine, private=False)
+    # Text options only: what is heard is text.
+    expected = {
+        "enabled": True,
+        "threshold": 0.8,
+        "categories": ["violent", "pii"],
+        "reply": "不行。",
+    }
+    session = engine.params["config"]["realtime.local_infra.session"]
+    assert session["moderation"] == expected
+    # Given again once the server is up: a loaded thread keeps old settings.
+    assert {"moderation": expected} in [
+        json.loads(text) for text in told(engine, "voice_session")
+    ]
+    await t.session.close("done")
+
+
+@pytest.mark.asyncio
+async def test_a_platform_with_moderation_off_has_the_server_check_nothing(
+    engine, monkeypatch
+):
+    from astrbot.core import content_moderation as cm
+
+    monkeypatch.setattr(
+        cm,
+        "astrbot_config",
+        {
+            "content_moderation_url": "http://127.0.0.1:17890",
+            "platform": [{"id": "test", "content_moderation": "disabled"}],
+        },
+    )
+    t = await open_session(engine, private=False)
+    session = engine.params["config"]["realtime.local_infra.session"]
+    assert session["moderation"] == {"enabled": False}
+    # Given again once up too: a loaded thread may still have it on.
+    assert given(engine, "moderation") == [
+        (json.dumps({"moderation": {"enabled": False}}), "voice_session")
+    ]
+    await t.session.close("done")
