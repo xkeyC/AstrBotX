@@ -275,6 +275,7 @@ def test_departed_speaker_state_is_dropped(adapter):
 @pytest.mark.asyncio
 async def test_the_channel_voice_session_follows_who_is_in_the_channel(adapter):
     told: list[int | None] = []
+    events: list[str] = []
 
     class Session:
         media = SimpleNamespace(mixer=SimpleNamespace(forget=lambda session: None))
@@ -282,6 +283,10 @@ async def test_the_channel_voice_session_follows_who_is_in_the_channel(adapter):
         async def set_people(self, others):
             told.append(others)
 
+        async def event(self, text):
+            events.append(text)
+
+    adapter._people_changed()  # who is there, as after connecting
     adapter.voice_sessions[SERVER_SESSION] = Session()
     users = adapter.client.users
     # Everyone in the root channel: two others.
@@ -292,3 +297,5 @@ async def test_the_channel_voice_session_follows_who_is_in_the_channel(adapter):
     adapter._on_user_removed(users.pop(3), {})
     await asyncio.sleep(0)
     assert told == [1, 0]
+    # Its model is told who went.
+    assert events == ["alice left the voice channel.", "guest left the voice channel."]

@@ -4,7 +4,10 @@ A voice thread (kept per conversation key, from call to call) has a
 conversation of its own under the paired chat's UMO, next to the chat's
 conversations: it holds the transcript (what was heard and what was said)
 and is what the thread's stats rows point at. It is never made the chat's
-current conversation.
+current conversation. On the local-multimodal-infra backend, "heard" is only
+what the voice model was given (Codex's ``InputDelivered``: the lines an
+input carried, each with its time); talk that wanted no reply and never
+reached the model is left out.
 
 Every turn of the voice thread (on the local-multimodal-infra backend: its
 replies and compactions) is a stats row of agent type ``codex_voice`` with
@@ -81,8 +84,11 @@ class VoiceRecord:
         engine: CodexEngine,
         thread_id: str,
         label: str,
+        delivered_only: bool = False,
     ) -> None:
         self.umo = umo
+        # Heard lines come from InputDelivered, not every transcript.
+        self._delivered_only = delivered_only
         self.cid = cid
         self._engine = engine
         self._thread_id = thread_id
@@ -110,8 +116,13 @@ class VoiceRecord:
             payload = msg.get("payload")
             if not isinstance(payload, dict):
                 return
-            if (done := payload.get("InputTranscriptDone")) is not None:
-                self._line("user", done)
+            if (sent := payload.get("InputDelivered")) is not None:
+                if self._delivered_only:
+                    for line in sent.get("lines") or ():
+                        self._line("user", {"text": line})
+            elif (done := payload.get("InputTranscriptDone")) is not None:
+                if not self._delivered_only:
+                    self._line("user", done)
             elif (done := payload.get("OutputTranscriptDone")) is not None:
                 self._line("assistant", done)
                 self._write(self._flush())

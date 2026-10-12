@@ -44,8 +44,10 @@ from .session import (
     FAILED_SPEECH,
     VOICE_THREAD_CONFIG,
     VoiceSession,
+    local_now,
     realtime_voice_config,
     time_prompt,
+    voice_now,
 )
 
 IN_RATE = 16000  # what Codex hands the server: 16-bit mono PCM
@@ -105,7 +107,8 @@ INFRA_INSTRUCTIONS = """You are the voice in a live voice conversation. What peo
 - Speak naturally and briefly, usually one to three short sentences, in the speaker's language. Never use Markdown, lists, links, code or emoji.
 - To stay silent, call stay_silent and write nothing.
 - To delegate to the backend, call backend_task with the whole task in one sentence, then say in a few words that you are on it. The result comes back later as a message; tell it then, briefly and in your own words.
-- Text in parentheses comes from the system, not from anyone speaking."""
+- Text in parentheses comes from the system, not from anyone speaking.
+- Every line you hear, and every event (someone joining or leaving), starts with the local time it happened: [HH:MM:SS]. For the exact current date and time, call current_time."""
 START_INSTRUCTIONS = "A voice conversation has started."
 # Codex reads {now} as the time of the hang-up.
 END_INSTRUCTIONS = "The voice conversation ended at {now}; nothing said now is heard."
@@ -120,12 +123,18 @@ STAY_SILENT_TOOL = {
     "description": "Says nothing: call it instead of replying whenever you stay silent.",
     "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
 }
+CURRENT_TIME_TOOL = {
+    "type": "function",
+    "name": "current_time",
+    "description": "Returns the current local date, weekday, time and time zone.",
+    "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+}
 BACKEND_TASK_TOOL = {
     "type": "function",
     "name": "backend_task",
     "description": (
         "Hands a task to the backend: anything needing current information "
-        "(time, date, weather, news, prices), searching or looking things up, "
+        "(weather, news, prices), searching or looking things up, "
         "or doing something (messages, reminders, devices, remembering). The "
         "result comes back later as a message."
     ),
@@ -326,6 +335,8 @@ class InfraVoiceSession(VoiceSession):
     """A voice conversation on a local-multimodal-infra server, the voice
     thread's model doing the talking."""
 
+    RECORDS_DELIVERED = True
+
     def __init__(self, *args, **kwargs) -> None:
         """Creates the session (it starts with ``launch``).
 
@@ -336,7 +347,11 @@ class InfraVoiceSession(VoiceSession):
         """
         super().__init__(*args, **kwargs)
         # A platform tool named as a built-in one is left out.
-        reserved = {BACKEND_TASK_TOOL["name"], STAY_SILENT_TOOL["name"]}
+        reserved = {
+            BACKEND_TASK_TOOL["name"],
+            STAY_SILENT_TOOL["name"],
+            CURRENT_TIME_TOOL["name"],
+        }
         if dropped := [
             t.spec.get("name") for t in self.tools if t.spec.get("name") in reserved
         ]:
@@ -407,6 +422,10 @@ class InfraVoiceSession(VoiceSession):
             "realtime.local_infra.idle_compact_percent": int(
                 settings["idle_compact_percent"]
             ),
+            # Heard lines and the hang-up's time in AstrBot's zone, as now.
+            "realtime.local_infra.utc_offset_minutes": int(
+                voice_now().utcoffset().total_seconds() // 60
+            ),
         }
         # Its turns are its own: the chat's memory tools and rights too.
         config.update(self.chat.memory_config())
@@ -441,6 +460,7 @@ class InfraVoiceSession(VoiceSession):
             "dynamic_tools": [
                 BACKEND_TASK_TOOL,
                 STAY_SILENT_TOOL,
+                CURRENT_TIME_TOOL,
                 *(tool.spec for tool in self.tools),
             ],
             "no_environment": True,
@@ -482,6 +502,11 @@ class InfraVoiceSession(VoiceSession):
                 "contentItems": [{"type": "inputText", "text": "Silent."}],
                 "success": True,
                 "endTurn": True,
+            }
+        if msg.get("tool") == CURRENT_TIME_TOOL["name"]:
+            return {
+                "contentItems": [{"type": "inputText", "text": local_now()}],
+                "success": True,
             }
         if msg.get("tool") != "backend_task":
             tool = next(

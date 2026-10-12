@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime
 import ipaddress
 import json
 import logging
 import time
+import zoneinfo
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,6 +89,13 @@ READY_DELAY = 0.5
 CLOSE_WAIT = 10.0
 
 VOICE_THREAD_INSTRUCTIONS = """This thread only carries a realtime voice conversation; requests are handled elsewhere."""
+
+# Names where the conversation takes place (the session's label).
+PLATFORM_PROMPT = "This voice conversation takes place on {platform}."
+# The bot's own joining, the first event of every conversation.
+JOINED_EVENT = "You joined the voice conversation."
+# Events given before the conversation is open wait, at most this many.
+MAX_PENDING_EVENTS = 20
 
 # Appended to every realtime prompt: the realtime model has no clock of its own.
 TIME_PROMPT = """Today is {date} ({weekday}), time zone {timezone}; the current time was {time} when this conversation started. Your own knowledge is older than that: anything about current events, news, prices, weather, schedules or other recent or changing information must be delegated to the backend, never answered from memory."""
@@ -321,6 +330,10 @@ class VoiceSession:
     the same chat.
     """
 
+    # The transcript record keeps only what the voice model was given
+    # (``RealtimeEvent::InputDelivered``) instead of everything heard.
+    RECORDS_DELIVERED = False
+
     def __init__(
         self,
         key: str,
@@ -334,6 +347,7 @@ class VoiceSession:
         thread_key: str = VOICE_THREAD_KEY,
         tools: list[VoiceTool] | None = None,
         on_wake: Callable[..., Awaitable[None] | None] | None = None,
+        joined: str | None = None,
     ) -> None:
         """
         Args:
@@ -358,8 +372,17 @@ class VoiceSession:
                 guesses said it (the transcript's speaker; None on a wake
                 word, heard before the transcript). E.g. to turn toward the
                 speaker. Only the ``local_infra`` backend calls it.
+            joined: The event of the bot joining (see ``event``), given as
+                soon as the conversation is open, e.g. which channel and who
+                is there; by default ``JOINED_EVENT``.
         """
         self.tools = list(tools or [])
+        # The bot's joining, the first event once the conversation is open.
+        self._joined = joined or JOINED_EVENT
+        # Events for the voice model (``event``), each with its time, not
+        # given yet (those of before the conversation was open wait).
+        self._events_pending: list[str] = []
+        self._events_lock = asyncio.Lock()
         self._on_wake = on_wake
         self.key = key
         self.scope_id = scope_id
@@ -485,11 +508,18 @@ class VoiceSession:
         extra = await self.chat.voice_persona() or self.options.extra_prompt
         self._check_open()
         self.persona = extra
+        if self.label != "voice":
+            self.prompt = (
+                f"{self.prompt}\n\n{PLATFORM_PROMPT.format(platform=self.label)}"
+            )
         if extra:
             self.prompt = f"{self.prompt}\n\n{extra}"
         await self._open_agent()
         await self._connect()
         self._check_open()
+        # The bot joined now, before whatever happened while it started.
+        self._events_pending.insert(0, _stamped(self._joined))
+        await self._give_events()
         # Results reaching the chat later are given to this conversation.
         VOICE_SESSIONS[self.chat.umo] = self
 
@@ -554,7 +584,14 @@ class VoiceSession:
                     "conversation_id": cid,
                 },
             )
-        record = VoiceRecord(self.chat.umo, cid, engine, self._thread_id, self.label)
+        record = VoiceRecord(
+            self.chat.umo,
+            cid,
+            engine,
+            self._thread_id,
+            self.label,
+            delivered_only=self.RECORDS_DELIVERED,
+        )
         await record.start()
         self._record = record
         self._check_open()
@@ -815,6 +852,41 @@ class VoiceSession:
             # conversation is open.
             await self._give_context()
 
+    async def event(self, text: str) -> None:
+        """Gives the voice model something that happened in the
+        conversation (someone came or went), with the time it happened
+        (``voice_now``). Not a turn of its own: on the ``local_infra``
+        backend it goes with the next input, like talk that wanted no
+        reply; Codex realtime takes it as a note. Before the conversation
+        is open it waits (the newest ``MAX_PENDING_EVENTS``)."""
+        text = text.strip()
+        if not text or self._closed:
+            return
+        self._events_pending.append(_stamped(text))
+        del self._events_pending[:-MAX_PENDING_EVENTS]
+        if self.ready:
+            await self._give_events()
+
+    async def _give_events(self) -> None:
+        """Gives the voice model the events waiting, in order (one sender
+        at a time)."""
+        async with self._events_lock:
+            while (
+                self._events_pending
+                and self._engine is not None
+                and self._thread_id is not None
+                and not self._closed
+            ):
+                text = self._events_pending.pop(0)
+                try:
+                    await self._engine.rt.realtime_append_text(
+                        self._thread_id, text, "voice_event"
+                    )
+                except Exception as exc:  # noqa: BLE001 - the conversation goes on
+                    logger.warning(
+                        "%s voice %s: event not given: %s", self.label, self.key, exc
+                    )
+
     async def set_people(self, others: int | None) -> None:
         """How many other people are in the conversation's room or channel
         (None: not known): with one, the voice model hears everything they
@@ -969,17 +1041,35 @@ class VoiceSession:
                 await engine.forget_thread(thread_id)
 
 
-def time_prompt() -> str:
-    """The current date for the realtime model, in AstrBot's configured zone."""
-    import datetime
-    import zoneinfo
-
+def voice_now() -> datetime.datetime:
+    """The current time in AstrBot's configured time zone (``timezone``), or
+    the machine's own: the clock of everything a voice model is told."""
     now = None
     if zone := astrbot_config.get("timezone"):
         with contextlib.suppress(Exception):
             now = datetime.datetime.now(zoneinfo.ZoneInfo(zone))
-    if now is None:
-        now = datetime.datetime.now().astimezone()
+    return now or datetime.datetime.now().astimezone()
+
+
+def _stamped(event: str) -> str:
+    """An event as the voice model reads it: ``[14:03:21] (Bob joined.)``."""
+    return f"[{voice_now():%H:%M:%S}] ({event})"
+
+
+def local_now() -> str:
+    """The current date and time (``voice_now``) for the voice model, e.g.
+    ``2026-10-12 14:03:21 Monday (UTC+08:00 CST)``."""
+    now = voice_now()
+    offset = now.strftime("%z")
+    zone = f"UTC{offset[:3]}:{offset[3:]}"
+    if name := now.strftime("%Z"):
+        zone = f"{zone} {name}"
+    return now.strftime(f"%Y-%m-%d %H:%M:%S %A ({zone})")
+
+
+def time_prompt() -> str:
+    """The current date for the realtime model, in AstrBot's configured zone."""
+    now = voice_now()
     return TIME_PROMPT.format(
         date=now.strftime("%Y-%m-%d"),
         weekday=now.strftime("%A"),

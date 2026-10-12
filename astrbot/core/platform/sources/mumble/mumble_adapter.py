@@ -192,6 +192,9 @@ class MumblePlatformAdapter(Platform):
         self._detector = SpeechDetector()
         self._preroll: dict[str, deque[tuple[float, int, bytes, bool]]] = {}
         self._retry_at: dict[str, float] = {}
+        # The bot's channel and who else is in it (session -> name), as last
+        # seen: comings and goings are told to the channel's voice model.
+        self._present: tuple[int | None, dict[int, str]] = (None, {})
         self._tasks: set[asyncio.Task] = set()
         # Bumped on every connection; ids from an older one are stale.
         self._generation = 0
@@ -247,6 +250,9 @@ class MumblePlatformAdapter(Platform):
                 self.client.join_channel(channel.channel_id)
         if self.muted:
             self.client.set_self_state(self_mute=True, self_deaf=True)
+        # Who is in the bot's channel now, the base of later comings and goings.
+        self._present = (None, {})
+        self._people_changed()
         # Sessions ids from before the reconnect may now belong to others.
         self.whisper_targets.clear()
         self._detector.clear()
@@ -483,6 +489,7 @@ class MumblePlatformAdapter(Platform):
             # one other person): local_infra.
             gated = realtime_voice_config()["backend"] == "local_infra"
             prompt = channel_prompt(self.voice_options, gated=gated)
+            joined = f"You joined the voice channel {self._here()}."
 
             def send(frame: bytes, terminator: bool) -> None:
                 self._send_voice(frame, AudioTarget.NORMAL, terminator)
@@ -492,6 +499,7 @@ class MumblePlatformAdapter(Platform):
             if len(whispers) >= MAX_WHISPER_SESSIONS:
                 return None
             prompt = whisper_prompt(self.voice_options, user.name)
+            joined = f"You joined a private voice chat with {user.name}."
             target = self._whisper_target(user)
             if target is None:
                 return None
@@ -510,6 +518,7 @@ class MumblePlatformAdapter(Platform):
             on_closed=self._voice_closed,
             label="Mumble",
             thread_key="mumble_voice_thread",
+            joined=joined,
             # The chat that runs what is asked by voice: the server group (as
             # the fixed voice user, a member: who spoke is only named, and a
             # name grants nothing), or the whisperer's private chat (as the
@@ -593,13 +602,62 @@ class MumblePlatformAdapter(Platform):
             if user.channel_id == me.channel_id and user.session != me.session
         )
 
+    def _here(self) -> str:
+        """The bot's channel and who else is in it, for the voice model:
+        ``"Lobby" (here: Alice, Bob)``."""
+        me = self.client.me
+        if me is None:
+            return "(not known)"
+        channel = self.client.channels.get(me.channel_id)
+        others = sorted(
+            user.name
+            for user in self.client.users.values()
+            if user.channel_id == me.channel_id and user.session != me.session
+        )
+        name = f'"{channel.name}"' if channel is not None and channel.name else ""
+        here = f"here: {', '.join(others)}" if others else "nobody else is here"
+        return f"{name} ({here})".strip()
+
     def _people_changed(self) -> None:
         """Someone came, went or moved (the bot too): the channel's voice
         session hears accordingly (everything with one other person, else
-        only what calls the bot by name)."""
+        only what calls the bot by name), and its model is told who came or
+        went, or that the bot moved."""
+        me = self.client.me
+        before_channel, before = self._present
+        now = (
+            {
+                user.session: user.name
+                for user in self.client.users.values()
+                if user.channel_id == me.channel_id
+                and user.session != me.session
+                and user.name
+            }
+            if me is not None
+            else {}
+        )
+        channel = me.channel_id if me is not None else None
+        self._present = (channel, now)
         session = self.voice_sessions.get(SERVER_SESSION)
-        if session is not None:
-            self._spawn(session.set_people(self._channel_others()))
+        if session is None:
+            return
+        self._spawn(session.set_people(self._channel_others()))
+        if channel is None or before_channel is None:
+            return  # nothing to compare with yet
+        if channel != before_channel:
+            events = [f"You moved to the voice channel {self._here()}."]
+        else:
+            events = [
+                f"{name} joined the voice channel."
+                for key, name in now.items()
+                if key not in before
+            ] + [
+                f"{name} left the voice channel."
+                for key, name in before.items()
+                if key not in now
+            ]
+        for text in events:
+            self._spawn(session.event(text))
 
     def _on_user_removed(self, user: User, _message: dict) -> None:
         """Drops a departed speaker's audio state; their session id is reused."""

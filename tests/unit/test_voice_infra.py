@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import datetime
 import json
 import wave
 from types import SimpleNamespace
@@ -347,6 +348,7 @@ async def test_the_voice_thread_talks_on_the_chosen_model(engine):
     assert [tool["name"] for tool in params["dynamic_tools"]] == [
         "backend_task",
         "stay_silent",
+        "current_time",
     ]
     config = params["config"]
     assert config["realtime.backend"] == "local_multimodal_infra"
@@ -477,6 +479,7 @@ async def test_a_platform_tool_is_done_at_once(engine):
     assert [tool["name"] for tool in engine.params["dynamic_tools"]] == [
         "backend_task",
         "stay_silent",
+        "current_time",
         "wave",
         "broken",
         "jump",
@@ -698,7 +701,21 @@ async def _stat_rows(db):
 async def test_a_call_leaves_its_transcript_and_stats(engine, voice_db):
     engine.rt.usage["total_token_usage"] = _total(1000, 800, 50)
     t = await open_session(engine, private=False)
+    # Heard, then given to the model with the utterance that wanted a reply.
+    await event(t, {"InputTranscriptDone": {"text": "Bob: lunch?", "respond": False}})
     await event(t, {"InputTranscriptDone": {"text": "what time is it"}})
+    await event(
+        t,
+        {
+            "InputDelivered": {
+                "lines": [
+                    "[12:00:01] Bob: lunch?",
+                    "[12:00:02] (Alice joined)",
+                    "[12:00:03] what time is it",
+                ]
+            }
+        },
+    )
     await t.pump.queue.put({"type": "task_started", "turn_id": "u1"})
     await t.pump.queue.put(
         {"type": "token_count", "info": {"total_token_usage": _total(3000, 2500, 90)}}
@@ -707,7 +724,8 @@ async def test_a_call_leaves_its_transcript_and_stats(engine, voice_db):
         {"type": "task_complete", "turn_id": "u1", "time_to_first_token_ms": 400}
     )
     await event(t, {"OutputTranscriptDone": {"text": "It is three."}})
-    await event(t, {"InputTranscriptDone": {"text": "thanks"}})
+    # Heard, never given to the model: not in the transcript.
+    await event(t, {"InputTranscriptDone": {"text": "thanks", "respond": False}})
     await t.session.close("hung up")
 
     # Its own conversation under the chat, which stays the chat's choice.
@@ -715,9 +733,10 @@ async def test_a_call_leaves_its_transcript_and_stats(engine, voice_db):
     conv = await voice_db.get_conversation_by_id(cid=state["conversation_id"])
     assert (conv.user_id, conv.title) == ("test:GroupMessage:server", "Voice: voice")
     assert conv.content == [
-        {"role": "user", "content": "what time is it"},
+        {"role": "user", "content": "[12:00:01] Bob: lunch?"},
+        {"role": "user", "content": "[12:00:02] (Alice joined)"},
+        {"role": "user", "content": "[12:00:03] what time is it"},
         {"role": "assistant", "content": "It is three."},
-        {"role": "user", "content": "thanks"},
     ]
     [row] = await _stat_rows(voice_db)
     assert (
@@ -750,7 +769,7 @@ async def test_the_next_call_keeps_the_conversation_and_a_cut_turn_counts(
     engine, voice_db
 ):
     t = await open_session(engine)
-    await event(t, {"InputTranscriptDone": {"text": "hello"}})
+    await event(t, {"InputDelivered": {"lines": ["hello"]}})
     await t.session.close("hung up")
     cid = voice.sp.values["mumble_voice_thread_infra"]["conversation_id"]
 
@@ -897,7 +916,14 @@ async def test_any_tool_result_reaches_codex_in_time(engine, monkeypatch):
     t.session.launch(t.failures.append)
     await eventually(lambda: engine.rt.started or t.failures)
     names = [tool["name"] for tool in engine.params["dynamic_tools"]]
-    assert names == ["backend_task", "stay_silent", "nothing", "mapping", "slow"]
+    assert names == [
+        "backend_task",
+        "stay_silent",
+        "current_time",
+        "nothing",
+        "mapping",
+        "slow",
+    ]
     pump = engine.pumps["t1"]
     assert (await pump.tool_handler({"tool": "nothing", "arguments": {}}))[
         "contentItems"
@@ -1417,4 +1443,91 @@ async def test_a_platform_with_moderation_off_has_the_server_check_nothing(
     assert given(engine, "moderation") == [
         (json.dumps({"moderation": {"enabled": False}}), "voice_session")
     ]
+    await t.session.close("done")
+
+
+@pytest.mark.asyncio
+async def test_the_model_can_ask_the_time(engine, monkeypatch):
+    monkeypatch.setattr(infra_module, "local_now", lambda: "2026-10-12 14:03:21")
+    t = await open_session(engine)
+    result = await t.pump.tool_handler({"tool": "current_time", "arguments": {}})
+    assert result == {
+        "contentItems": [{"type": "inputText", "text": "2026-10-12 14:03:21"}],
+        "success": True,
+    }
+    await t.session.close("done")
+
+
+def test_the_voice_clock_is_astrbots_configured_zone(monkeypatch):
+    monkeypatch.setitem(voice.astrbot_config, "timezone", "Asia/Tokyo")
+    assert voice.voice_now().utcoffset().total_seconds() == 9 * 3600
+    assert "(UTC+09:00" in voice.local_now()
+    monkeypatch.setitem(voice.astrbot_config, "timezone", "America/St_Johns")
+    assert "(UTC-0" in voice.local_now()
+    # A bad zone: the machine's own.
+    monkeypatch.setitem(voice.astrbot_config, "timezone", "Not/AZone")
+    assert voice.voice_now().utcoffset() is not None
+
+
+@pytest.mark.asyncio
+async def test_the_voice_thread_stamps_heard_lines_in_the_same_zone(
+    engine, monkeypatch
+):
+    monkeypatch.setitem(voice.astrbot_config, "timezone", "Asia/Kolkata")
+    t = await open_session(engine)
+    assert engine.params["config"]["realtime.local_infra.utc_offset_minutes"] == 330
+    await t.session.close("done")
+
+
+def fixed_clock(monkeypatch, *times: str):
+    """Events are stamped with these times (HH:MM:SS) in turn."""
+    clock = iter(times)
+    monkeypatch.setattr(voice, "_stamped", lambda event: f"[{next(clock)}] ({event})")
+
+
+def test_an_event_is_stamped_with_the_voice_clock(monkeypatch):
+    monkeypatch.setattr(
+        voice, "voice_now", lambda: datetime.datetime(2026, 10, 12, 14, 3, 21)
+    )
+    assert voice._stamped("Bob joined.") == "[14:03:21] (Bob joined.)"
+
+
+@pytest.mark.asyncio
+async def test_the_bot_joining_then_events_given_meanwhile_go_once_open(
+    engine, monkeypatch
+):
+    fixed_clock(monkeypatch, "12:00:01", "12:00:05", "12:00:09")
+    t = await open_session(engine, started=False, joined="You joined the Lobby.")
+    # Before the conversation is open: it keeps the time it happened.
+    await t.session.event("Alice joined the voice channel.")
+    assert told(engine, "voice_event") == []
+    await t.pump.queue.put({"type": "realtime_conversation_started"})
+    await eventually(lambda: t.session.ready)
+    await eventually(lambda: len(told(engine, "voice_event")) == 2)
+    await t.session.event("  ")
+    await t.session.event("Alice left the voice channel.")
+    assert told(engine, "voice_event") == [
+        "[12:00:05] (You joined the Lobby.)",
+        "[12:00:01] (Alice joined the voice channel.)",
+        "[12:00:09] (Alice left the voice channel.)",
+    ]
+    await t.session.close("done")
+
+
+@pytest.mark.asyncio
+async def test_the_bot_joining_is_told_by_default(engine, monkeypatch):
+    fixed_clock(monkeypatch, "08:30:00")
+    t = await open_session(engine)
+    await eventually(lambda: told(engine, "voice_event"))
+    assert told(engine, "voice_event") == [f"[08:30:00] ({voice.JOINED_EVENT})"]
+    await t.session.close("done")
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_names_the_platform(engine):
+    t = await open_session(engine, label="Mumble")
+    assert (
+        "This voice conversation takes place on Mumble."
+        in engine.params["base_instructions"]
+    )
     await t.session.close("done")
