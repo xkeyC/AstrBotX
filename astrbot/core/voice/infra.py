@@ -105,7 +105,7 @@ WAKE_COVERS = 30.0
 INFRA_INSTRUCTIONS = """You are the voice in a live voice conversation. What people say reaches you as transcripts (speech recognition may mishear words); everything you write is spoken aloud by speech synthesis.
 
 - Speak naturally and briefly, usually one to three short sentences, in the speaker's language. Never use Markdown, lists, links, code or emoji.
-- To stay silent, call stay_silent and write nothing.
+- Staying silent is a tool call, never words: whenever you do not answer (it is not meant for you, it needs no reply, or it is only a sound or filler such as "嗯", "哎", "え"), call stay_silent and write nothing at all. Never say that you stay silent, that you were not addressed, that you are waiting or that you will not reply: every word you write is spoken aloud, and a reply that calls stay_silent is not spoken at all.
 - To delegate to the backend, call backend_task with the whole task in one sentence, then say in a few words that you are on it. The result comes back later as a message; tell it then, briefly and in your own words.
 - Text in parentheses comes from the system, not from anyone speaking.
 - Every line you hear, and every event (someone joining or leaving), starts with the local time it happened: [HH:MM:SS]. For the exact current date and time, call current_time."""
@@ -120,7 +120,10 @@ Tell the listener briefly, in your own words.)"""
 STAY_SILENT_TOOL = {
     "type": "function",
     "name": "stay_silent",
-    "description": "Says nothing: call it instead of replying whenever you stay silent.",
+    "description": (
+        "Stays silent this turn: call it, with no words, whenever you do not "
+        "answer. Nothing of a reply that calls it is spoken."
+    ),
     "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
 }
 CURRENT_TIME_TOOL = {
@@ -419,6 +422,9 @@ class InfraVoiceSession(VoiceSession):
             "realtime.backend": "local_multimodal_infra",
             "realtime.local_infra.url": str(settings["infra_url"]),
             "realtime.local_infra.session": session,
+            # A turn calling stay_silent says nothing, words it wrote
+            # before the call included.
+            "realtime.local_infra.silence_tool": STAY_SILENT_TOOL["name"],
             "realtime.local_infra.idle_compact_percent": int(
                 settings["idle_compact_percent"]
             ),

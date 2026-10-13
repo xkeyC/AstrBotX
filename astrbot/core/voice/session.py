@@ -215,8 +215,9 @@ def group_rule(options: VoiceOptions, *, gated: bool) -> str:
             f"someone says calling you by your name{names} reaches you (with what others said just "
             f"before it, as context: not to you); with just one other person, all they say does. "
             f"Answer it, unless it is not for you after all (your name only came up in their talk, "
-            f"or they are talking to someone else, or on the phone): then produce no audio and no "
-            f"text at all - complete silence."
+            f"they are talking to someone else, in a game or on the phone, or it is only a sound "
+            f"or filler): then call stay_silent and write no words at all - not even to say that "
+            f"it was not for you."
         )
     return (
         f"The one rule that matters most: speak ONLY when the speaker says your name{names} to "

@@ -352,6 +352,8 @@ async def test_the_voice_thread_talks_on_the_chosen_model(engine):
     ]
     config = params["config"]
     assert config["realtime.backend"] == "local_multimodal_infra"
+    # A reply that calls stay_silent is not spoken, words before it included.
+    assert config["realtime.local_infra.silence_tool"] == "stay_silent"
     assert config["realtime.local_infra.url"] == "ws://127.0.0.1:17890/v1/realtime"
     assert config["realtime.local_infra.token"] == "secret"
     assert config["realtime.local_infra.session"] == {
@@ -1531,3 +1533,10 @@ async def test_the_prompt_names_the_platform(engine):
         in engine.params["base_instructions"]
     )
     await t.session.close("done")
+
+
+def test_a_gated_room_stays_silent_with_the_tool_never_with_words():
+    rule = voice.group_rule(VoiceOptions(name="Jarvis", aliases=[]), gated=True)
+    assert "call stay_silent" in rule
+    assert "not even to say" in rule
+    assert "call stay_silent and write nothing at all" in INFRA_INSTRUCTIONS
