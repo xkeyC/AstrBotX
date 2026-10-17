@@ -170,25 +170,32 @@ class InfraCatalog:
 catalog = InfraCatalog()
 
 
-def realtime_asr_model(settings: dict | None = None) -> str:
-    """The ASR model realtime voice sessions ask for ("": the server's).
+#: The models realtime voice sessions may choose, and the service whose task
+#: kind each needs.
+REALTIME_VOICE_MODELS = {"asr_model": "stt", "tts_model": "tts"}
 
-    The chosen one while the server lists it as a usable speech recognition
-    model, or while the catalog is unknown; otherwise the server's default.
+
+def realtime_voice_model(key: str, settings: dict | None = None) -> str:
+    """The model realtime voice sessions ask for as ``key`` (``asr_model``,
+    ``tts_model``; "": the server's).
+
+    The chosen one while the server lists it as a usable model of that task
+    kind, or while the catalog is unknown; otherwise the server's default.
     """
     settings = settings or local_infra_settings()
-    chosen = settings["services"]["realtime_voice"].get("asr_model", "")
+    chosen = settings["services"]["realtime_voice"].get(key, "")
     if not chosen or not catalog.known:
         return chosen
-    kind = SERVICE_TASK_KINDS["stt"]
+    kind = SERVICE_TASK_KINDS[REALTIME_VOICE_MODELS[key]]
     if any(
         m.id == chosen and m.usable and kind in m.task_kinds
         for m in catalog.models or []
     ):
         return chosen
     logger.warning(
-        "local-multimodal-infra has no usable ASR model %s for realtime voice; "
+        "local-multimodal-infra has no usable %s model %s for realtime voice; "
         "using the server's default",
+        kind,
         chosen,
     )
     return ""

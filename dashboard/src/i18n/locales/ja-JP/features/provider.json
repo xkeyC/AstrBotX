@@ -234,7 +234,9 @@
     "unavailableModel": "{model} (unavailable)",
     "realtimeAsr": "リアルタイム音声の音声認識モデル",
     "realtimeAsrHint": "リアルタイム音声セッションで使う ASR モデル。サーバーにない場合はサーバーの既定を使います。",
-    "realtimeAsrDefault": "サーバーの既定",
+    "realtimeTts": "リアルタイム音声の音声合成モデル",
+    "realtimeTtsHint": "リアルタイム音声セッションで話す TTS モデル。サーバーにない場合はサーバーの既定を使います。参照音声や感情は Codex ページで設定します。",
+    "realtimeModelDefault": "サーバーの既定",
     "state": {
       "off": "Off",
       "on": "Available",

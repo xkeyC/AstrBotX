@@ -11,7 +11,7 @@ from aiohttp.test_utils import TestServer
 
 from astrbot.core.local_infra import catalog as catalog_module
 from astrbot.core.local_infra import config as infra_config
-from astrbot.core.local_infra.catalog import InfraCatalog, realtime_asr_model
+from astrbot.core.local_infra.catalog import InfraCatalog, realtime_voice_model
 from astrbot.core.local_infra.client import LocalInfraClient, LocalInfraError
 
 MODELS = [
@@ -190,9 +190,13 @@ def test_settings_are_normalized():
     }
     assert "bogus" not in s["services"]
     voice = infra_config.normalize_local_infra(
-        {"services": {"realtime_voice": {"asr_model": " fun-asr-nano "}}}
+        {
+            "services": {
+                "realtime_voice": {"asr_model": " fun-asr-nano ", "tts_model": 1}
+            }
+        }
     )["services"]["realtime_voice"]
-    assert voice == {"enable": True, "asr_model": "fun-asr-nano"}
+    assert voice == {"enable": True, "asr_model": "fun-asr-nano", "tts_model": "1"}
     assert infra_config.normalize_local_infra(None) == (
         infra_config.default_local_infra()
     )
@@ -240,21 +244,33 @@ async def test_services_resolve_to_enabled_models(infra):
 
 
 @pytest.mark.asyncio
-async def test_realtime_voice_hears_with_a_usable_chosen_asr_model(infra, monkeypatch):
+async def test_realtime_voice_uses_usable_chosen_models(infra, monkeypatch):
     catalog = InfraCatalog()
     monkeypatch.setattr(catalog_module, "catalog", catalog)
 
-    def chosen(model):
-        return settings(infra.base_url, realtime_voice={"asr_model": model})
+    def asr(model):
+        return realtime_voice_model(
+            "asr_model",
+            settings(infra.base_url, realtime_voice={"asr_model": model}),
+        )
+
+    def tts(model):
+        return realtime_voice_model(
+            "tts_model",
+            settings(infra.base_url, realtime_voice={"tts_model": model}),
+        )
 
     # Not known yet: as chosen, the server decides.
-    assert realtime_asr_model(chosen("sensevoice")) == "sensevoice"
+    assert asr("sensevoice") == "sensevoice"
     await catalog.refresh(settings(infra.base_url))
-    assert realtime_asr_model(chosen("sensevoice")) == "sensevoice"
-    assert realtime_asr_model(chosen("")) == ""
-    # Not an ASR model, or not on the server: the server's default.
-    assert realtime_asr_model(chosen("qwen3-tts")) == ""
-    assert realtime_asr_model(chosen("gone")) == ""
+    assert asr("sensevoice") == "sensevoice"
+    assert asr("") == ""
+    assert tts("qwen3-tts") == "qwen3-tts"
+    # Not of the task kind, disabled, or not on the server: the server's default.
+    assert asr("qwen3-tts") == ""
+    assert tts("sensevoice") == ""
+    assert tts("indextts") == ""
+    assert asr("gone") == ""
 
 
 @pytest.mark.asyncio

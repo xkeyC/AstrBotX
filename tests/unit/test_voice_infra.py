@@ -405,18 +405,22 @@ async def test_the_voice_thread_talks_on_the_chosen_model(engine):
 
 
 @pytest.mark.asyncio
-async def test_the_chosen_asr_model_goes_to_the_server(engine, monkeypatch):
+async def test_the_chosen_models_go_to_the_server(engine, monkeypatch):
     infra = {
         **INFRA,
         "services": {
             **INFRA["services"],
-            "realtime_voice": {"asr_model": "fun-asr-nano-onnx"},
+            "realtime_voice": {
+                "asr_model": "fun-asr-nano-onnx",
+                "tts_model": "index-tts-2.5-onnx",
+            },
         },
     }
     monkeypatch.setitem(voice.astrbot_config, "local_infra", infra)
     t = await open_session(engine)
     session = engine.params["config"]["realtime.local_infra.session"]
     assert session["asr_model"] == "fun-asr-nano-onnx"
+    assert session["tts_model"] == "index-tts-2.5-onnx"
     await t.session.close("done")
 
 

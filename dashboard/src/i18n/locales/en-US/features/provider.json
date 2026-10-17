@@ -234,7 +234,9 @@
     "unavailableModel": "{model} (unavailable)",
     "realtimeAsr": "Realtime voice speech recognition",
     "realtimeAsrHint": "The ASR model realtime voice sessions hear with; the server's default when it lacks this model.",
-    "realtimeAsrDefault": "Server default",
+    "realtimeTts": "Realtime voice speech synthesis",
+    "realtimeTtsHint": "The TTS model realtime voice sessions speak with; the server's default when it lacks this model. The reference voice and emotion are set on the Codex page.",
+    "realtimeModelDefault": "Server default",
     "state": {
       "off": "Off",
       "on": "Available",

@@ -176,9 +176,18 @@
           >
             <v-select
               v-model="form.services.realtime_voice.asr_model"
-              :items="realtimeAsrItems()"
+              :items="realtimeModelItems('asr_model', 'stt')"
               :label="tm('localInfra.realtimeAsr')"
               :hint="tm('localInfra.realtimeAsrHint')"
+              persistent-hint
+              variant="outlined"
+              density="comfortable"
+            />
+            <v-select
+              v-model="form.services.realtime_voice.tts_model"
+              :items="realtimeModelItems('tts_model', 'tts')"
+              :label="tm('localInfra.realtimeTts')"
+              :hint="tm('localInfra.realtimeTtsHint')"
               persistent-hint
               variant="outlined"
               density="comfortable"
@@ -521,13 +530,13 @@ function modelItems(name: ServiceName) {
   return items
 }
 
-function realtimeAsrItems() {
-  const ids = candidates('stt')
+function realtimeModelItems(key: 'asr_model' | 'tts_model', service: ServiceName) {
+  const ids = candidates(service)
   const items = [
-    { title: tm('localInfra.realtimeAsrDefault'), value: '' },
+    { title: tm('localInfra.realtimeModelDefault'), value: '' },
     ...ids.map((id) => ({ title: id, value: id }))
   ]
-  const chosen = form.value?.services.realtime_voice?.asr_model
+  const chosen = form.value?.services.realtime_voice?.[key]
   if (chosen && !ids.includes(chosen)) {
     items.push({ title: tm('localInfra.unavailableModel', { model: chosen }), value: chosen })
   }

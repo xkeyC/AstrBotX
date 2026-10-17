@@ -234,7 +234,9 @@
     "unavailableModel": "{model}（不可用）",
     "realtimeAsr": "实时语音的语音识别模型",
     "realtimeAsrHint": "实时语音会话用它听写；服务器没有这个模型时用其默认模型。",
-    "realtimeAsrDefault": "服务器默认",
+    "realtimeTts": "实时语音的语音合成模型",
+    "realtimeTtsHint": "实时语音会话用它说话；服务器没有这个模型时用其默认模型。参考音频、情感等在 Codex 页面的实时语音设置里。",
+    "realtimeModelDefault": "服务器默认",
     "state": {
       "off": "已关闭",
       "on": "可用",
