@@ -136,6 +136,9 @@ def _migrate_agent_runner_config(config: dict[str, Any]) -> bool:
         config["provider_settings"] = provider_settings
         changed = True
 
+    # The default persona and safety mode of the old settings carry over.
+    legacy_persona = provider_settings.get("default_personality")
+    legacy_safety = provider_settings.get("llm_safety_mode")
     for key in _LEGACY_AGENT_RUNNER_SETTING_KEYS:
         if key in provider_settings:
             provider_settings.pop(key)
@@ -148,6 +151,18 @@ def _migrate_agent_runner_config(config: dict[str, Any]) -> bool:
     elif existing_agent_runner.get("runner_type") != DEFAULT_AGENT_RUNNER_TYPE:
         config["agent_runner"] = normalize_agent_runner(existing_agent_runner)
         changed = True
+    runner_config = config["agent_runner"].setdefault("config", {})
+    if isinstance(runner_config, dict):
+        if (
+            isinstance(legacy_persona, str)
+            and legacy_persona
+            and runner_config.get("persona_id") in (None, "", "default")
+        ):
+            runner_config["persona_id"] = legacy_persona
+            changed = True
+        if legacy_safety is True and not runner_config.get("safety_mode"):
+            runner_config["safety_mode"] = True
+            changed = True
 
     config_version = config.get("config_version")
     if not isinstance(config_version, int) or config_version < 4:
@@ -171,11 +186,119 @@ def migrate_config_on_load(config: dict[str, Any], config_path: Path) -> bool:
     changed = _migrate_agent_runner_config(config)
     if changed and original.get("agent_runner") != config.get("agent_runner"):
         _backup_pre_codex_config(original, config_path)
+    changed = _migrate_shipyard_mode(config) or changed
     changed = _migrate_dynamic_persona_bindings(config, config_path) or changed
     changed = _migrate_voice_settings(config) or changed
     changed = _migrate_qq_call_voice(config, config_path) or changed
+    changed = _migrate_local_infra(config) or changed
+    changed = _migrate_web_search_settings(config) or changed
     changed = _migrate_windows_member_scope(config) or changed
     return changed
+
+
+def _migrate_shipyard_mode(config: dict[str, Any]) -> bool:
+    """Fold the removed ``agent_runner.config.shipyard_mode`` into the runtime.
+
+    Shipyard mode only changed what the agent was told and offered, while
+    commands ran wherever ``provider_settings.computer_use_runtime`` said;
+    the runtime is now the one switch. A config that had shipyard mode on
+    gets the sandbox runtime. Reads the raw value: normalizing the runner
+    config would drop the key unseen.
+
+    Args:
+        config: Mutable AstrBot configuration loaded from disk.
+
+    Returns:
+        Whether the configuration changed.
+    """
+    runner = config.get("agent_runner")
+    runner_config = runner.get("config") if isinstance(runner, dict) else None
+    if not isinstance(runner_config, dict) or "shipyard_mode" not in runner_config:
+        return False
+    if runner_config.pop("shipyard_mode") is True:
+        provider_settings = config.get("provider_settings")
+        if not isinstance(provider_settings, dict):
+            provider_settings = {}
+            config["provider_settings"] = provider_settings
+        previous = provider_settings.get("computer_use_runtime")
+        provider_settings["computer_use_runtime"] = "sandbox"
+        if previous != "sandbox":
+            logger.warning(
+                "Shipyard mode was removed: the Computer Use runtime is now "
+                "the sandbox (was %s), which keeps every agent file operation "
+                "inside the sandbox as shipyard mode did.",
+                previous or "none",
+            )
+    return True
+
+
+# AstrBot's own web search settings; Codex searches the web itself now
+# (``agent_runner.config.web_search``).
+_WEB_SEARCH_KEYS = (
+    "web_search",
+    "websearch_provider",
+    "websearch_tavily_key",
+    "websearch_bocha_key",
+    "websearch_brave_key",
+    "websearch_baidu_app_builder_key",
+    "websearch_firecrawl_key",
+    "websearch_exa_key",
+    "websearch_anysearch_key",
+    "web_search_link",
+)
+
+
+def _migrate_web_search_settings(config: dict[str, Any]) -> bool:
+    """Drop the removed built-in web search settings.
+
+    The Tavily keys stay in use by the knowledge base's URL import, so they
+    move to ``kb_tavily_key`` unless that is already set. Every other web
+    search key (the switch, the provider choice, the other providers' keys,
+    the citation switch) is removed.
+
+    Args:
+        config: Mutable AstrBot configuration loaded from disk.
+
+    Returns:
+        Whether the configuration changed.
+    """
+    provider_settings = config.get("provider_settings")
+    if not isinstance(provider_settings, dict):
+        return False
+    old_keys = [
+        key
+        for key in provider_settings
+        if key in _WEB_SEARCH_KEYS or key.startswith("websearch_")
+    ]
+    if not old_keys:
+        return False
+    tavily_keys = provider_settings.get("websearch_tavily_key")
+    if isinstance(tavily_keys, str):
+        tavily_keys = [tavily_keys]
+    if isinstance(tavily_keys, list):
+        tavily_keys = [
+            key.strip() for key in tavily_keys if isinstance(key, str) and key.strip()
+        ]
+        if tavily_keys and not config.get("kb_tavily_key"):
+            config["kb_tavily_key"] = tavily_keys
+            logger.warning(
+                "The Tavily key of the removed web search settings is now the "
+                "knowledge base's URL import key (kb_tavily_key)."
+            )
+    runner = config.get("agent_runner")
+    runner_config = runner.get("config") if isinstance(runner, dict) else None
+    if provider_settings.get("web_search") is True and not (
+        isinstance(runner_config, dict) and runner_config.get("web_search")
+    ):
+        # Not switched on for the user: a chat-wire provider may not support
+        # Codex's live web search.
+        logger.warning(
+            "The built-in web search was on and is removed; turn on Codex web "
+            "search on the Codex page for the agent to search the web."
+        )
+    for key in old_keys:
+        provider_settings.pop(key, None)
+    return True
 
 
 def _migrate_windows_member_scope(config: dict[str, Any]) -> bool:
@@ -215,6 +338,110 @@ def _migrate_windows_member_scope(config: dict[str, Any]) -> bool:
             "code execution and execution network access remain disabled."
         )
     config["config_version"] = 5
+    return True
+
+
+# System settings of content moderation, now the local_infra moderation
+# service's options (old key -> option).
+_MODERATION_KEYS = {
+    "content_moderation_blocked_reply": "blocked_reply",
+    "content_moderation_threshold": "threshold",
+    "content_moderation_nsfw_threshold": "nsfw_threshold",
+    "content_moderation_nsfw_labels": "nsfw_labels",
+    "content_moderation_categories": "categories",
+}
+
+
+def _migrate_local_infra(config: dict[str, Any]) -> bool:
+    """Gather the scattered local-multimodal-infra settings into
+    ``local_infra``, once.
+
+    The content moderation address/token/options (system settings) and the
+    realtime voice server URL/token (``agent_runner.config.realtime_voice``)
+    become the server address and token, the moderation service's options,
+    and the server is switched on when either was in use. The old keys are
+    removed; a config whose ``local_infra`` was already set only loses them.
+
+    Args:
+        config: Mutable AstrBot configuration loaded from disk.
+
+    Returns:
+        Whether the configuration changed.
+    """
+    from astrbot.core.local_infra.config import (
+        CONFIG_KEY,
+        base_from_url,
+        default_local_infra,
+        normalize_local_infra,
+    )
+
+    runner_config = (config.get("agent_runner") or {}).get("config")
+    voice = (
+        runner_config.get("realtime_voice") if isinstance(runner_config, dict) else None
+    )
+    voice = voice if isinstance(voice, dict) else {}
+    old_keys = [
+        key
+        for key in (
+            "content_moderation_url",
+            "content_moderation_token",
+            *_MODERATION_KEYS,
+        )
+        if key in config
+    ]
+    old_voice_keys = [key for key in ("infra_url", "infra_token") if key in voice]
+    if not old_keys and not old_voice_keys and CONFIG_KEY in config:
+        return False
+
+    # Untouched defaults (a config the defaults were filled into) take the
+    # old settings too.
+    if CONFIG_KEY not in config or (
+        normalize_local_infra(config[CONFIG_KEY]) == default_local_infra()
+    ):
+        settings = default_local_infra()
+        moderation_url = str(config.get("content_moderation_url") or "").strip()
+        voice_on = voice.get("backend") == "local_infra"
+        voice_url = str(voice.get("infra_url") or "").strip() if voice_on else ""
+        base = base_from_url(moderation_url) or base_from_url(voice_url)
+        if base:
+            settings["enable"] = True
+            settings["base_url"] = base
+        moderation_token = str(config.get("content_moderation_token") or "").strip()
+        voice_token = str(voice.get("infra_token") or "").strip() if voice_on else ""
+        settings["token"] = moderation_token or voice_token
+        voice_base = base_from_url(voice_url)
+        if moderation_url and voice_base and voice_base != base:
+            logger.warning(
+                "Moderation (%s) and realtime voice (%s) used different servers; "
+                "local_infra keeps the moderation one.",
+                base,
+                voice_base,
+            )
+        if moderation_token and voice_token and moderation_token != voice_token:
+            logger.warning(
+                "Moderation and realtime voice used different tokens; "
+                "local_infra keeps the moderation one."
+            )
+        moderation = settings["services"]["moderation"]
+        # Moderation was off without an address (also when the setting was
+        # there but empty); keep it off. Fresh configs keep the default.
+        moderation["enable"] = bool(moderation_url) or (
+            "content_moderation_url" not in config and not base
+        )
+        for old, new in _MODERATION_KEYS.items():
+            if old in config and config[old] is not None:
+                moderation[new] = config[old]
+        config[CONFIG_KEY] = normalize_local_infra(settings)
+        if base:
+            logger.warning(
+                "Content moderation and realtime voice server settings moved to "
+                "the local-multimodal-infra settings (%s).",
+                base,
+            )
+    for key in old_keys:
+        config.pop(key, None)
+    for key in old_voice_keys:
+        voice.pop(key, None)
     return True
 
 
@@ -543,6 +770,34 @@ def _migrate_legacy_openai_responses_sources(conf: Any) -> None:
         conf.save_config()
 
 
+_SESSION_CHAT_PROVIDER_KEY = "provider_perf_chat_completion"
+_SESSION_CHAT_PROVIDER_MIGRATION = "migration_done_drop_session_chat_provider"
+
+
+async def _drop_session_chat_providers() -> None:
+    """Remove the per-session chat provider choices, once.
+
+    They were set from the session management page, /provider and WebChat,
+    none of which offers them any more: the agent's model is Codex's. Left
+    behind, a choice would still quietly pick the provider for plugin LLM
+    calls in that session, with nothing in the WebUI to show or clear it.
+    """
+    from astrbot.core import sp
+
+    if await sp.global_get(_SESSION_CHAT_PROVIDER_MIGRATION, False):
+        return
+    stale = await sp.range_get_async("umo", None, _SESSION_CHAT_PROVIDER_KEY)
+    for pref in stale:
+        await sp.remove_async("umo", pref.scope_id, _SESSION_CHAT_PROVIDER_KEY)
+    if stale:
+        logger.info(
+            "Removed the chat provider choice of %d session(s); plugin LLM calls "
+            "there use the default chat provider now.",
+            len(stale),
+        )
+    await sp.global_put(_SESSION_CHAT_PROVIDER_MIGRATION, True)
+
+
 async def migra(
     db: Any, astrbot_config_mgr: Any, umop_config_router: Any, acm: Any
 ) -> None:
@@ -591,6 +846,12 @@ async def migra(
         _migra_provider_to_source_structure(acm.default_conf)
     except Exception as exc:
         logger.error("Migration for provider-source structure failed: %s", exc)
+        logger.error(traceback.format_exc())
+
+    try:
+        await _drop_session_chat_providers()
+    except Exception as exc:
+        logger.error("Removing per-session chat providers failed: %s", exc)
         logger.error(traceback.format_exc())
 
     # Replace the fork's old api_mode patch with the upstream dedicated adapter.
