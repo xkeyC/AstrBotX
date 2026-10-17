@@ -33,7 +33,7 @@ Enabling **Execute code** gives the Agent the `astrbot_execute_shell` and `astrb
 Enabling **Allow network during execution** permits network access during Shell/Python execution. Otherwise, network access during execution is restricted.
 
 > [!TIP]
-> This network setting controls whether Shell/Python can access the network through commands such as `curl` or `wget`. It does not control the [Web Search](/en/use/websearch) feature.
+> This network setting controls whether Shell/Python can access the network through commands such as `curl` or `wget`. It does not control Codex's web search (the "Enable Codex Web Search" setting of the Codex runner).
 
 **File access scope** has three options: **Disabled**, **Workspace**, and **Entire environment**:
 

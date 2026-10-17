@@ -4,7 +4,7 @@ When enabled, AstrBot checks what it hands to the cloud model (Codex) with a ser
 
 ## Turning it on
 
-1. In `Settings` → `Security` → `Content Moderation`, fill in **Content Moderation Service URL**, e.g. `http://127.0.0.1:17890`. Empty means no moderation. If the service requires a token, also fill in **Content Moderation Service Token** (sent as `Authorization: Bearer <token>`).
+1. In `Providers` → `Local service`, enable the local multimodal service, fill in its **Server address** (e.g. `http://127.0.0.1:17890`; and an **Inference token** if the server requires one) and keep the **Content moderation** service on. Thresholds, image levels, text categories and the blocked reply are set there too. Without a usable moderation model on the server, moderation is off.
 2. In `Platforms`, edit each bot and set **Content Moderation**:
    - `On`: text and images (default);
    - `Text only`: text is checked, images are not;

@@ -33,7 +33,7 @@ For a recurring task:
 Every day at 9 AM Asia/Shanghai time, search for three technology news items. Send their titles, brief summaries, and source links to this group.
 ```
 
-The model calls `future_task` to create a schedule. Do not rely only on “OK, scheduled”: open Future Tasks and verify the instructions, execution time, next run, and delivery target. A news task also requires [Web Search](./websearch.md).
+The model calls `future_task` to create a schedule. Do not rely only on “OK, scheduled”: open Future Tasks and verify the instructions, execution time, next run, and delivery target. A news task also requires "Enable Codex Web Search" in the Codex settings.
 
 You can also ask it to:
 
@@ -91,7 +91,7 @@ Tasks use the target conversation's configuration and conversation context. Late
 
 Scheduling does not grant extra capabilities:
 
-- For current information, configure [Web Search](./websearch.md).
+- For current information, turn on "Enable Codex Web Search" in the Codex settings.
 - For file operations or code execution, configure [Agent Sandbox](./astrbot-agent-sandbox.md).
 - For a business service, configure its [plugin](./plugin.md) or [MCP](./mcp.md).
 

@@ -177,9 +177,7 @@ export default defineConfig({
                 collapsed: false,
                 items: [
                   { text: "Agent 沙盒环境", link: "/astrbot-agent-sandbox" },
-                  { text: "SubAgent 编排", link: "/subagent" },
                   { text: "主动型能力", link: "/proactive-agent" },
-                  { text: "网页搜索", link: "/websearch" },
                   { text: "知识库", link: "/knowledge-base" },
                   { text: "上下文压缩", link: "/context-compress" },
                   { text: "内容审核", link: "/content-moderation" },
@@ -450,9 +448,7 @@ export default defineConfig({
                 collapsed: false,
                 items: [
                   { text: "Agent Sandbox", link: "/astrbot-agent-sandbox" },
-                  { text: "SubAgent Orchestration", link: "/subagent" },
                   { text: "Proactive Capabilities", link: "/proactive-agent" },
-                  { text: "Web Search", link: "/websearch" },
                   { text: "Knowledge Base", link: "/knowledge-base" },
                   { text: "Context Compression", link: "/context-compress" },
                   { text: "Content Moderation", link: "/content-moderation" },

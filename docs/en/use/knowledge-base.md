@@ -87,7 +87,7 @@ Changing a knowledge base's default chunk settings affects later uploads. It doe
 
 ### Import from a web URL
 
-Switch the upload dialog to `From URL` and enter a public page URL. This feature is currently in beta and uses **Tavily** to extract HTML content. It reads the Tavily key from the **default profile**. Follow the interface prompt to configure that key; credentials for another search provider cannot replace it.
+Switch the upload dialog to `From URL` and enter a public page URL. This feature is currently in beta and uses **Tavily** to extract HTML content. It reads the "Tavily API Key for URL Import" (`kb_tavily_key`) from the knowledge base settings of the **default profile**. Follow the interface prompt to configure that key.
 
 `Enable Content Cleaning` optionally uses the selected chat model to clean and organize extracted content, incurring additional model calls. Pages requiring login, blocking crawlers, or failing content extraction may not import. Imported content is a snapshot; later website changes are not synchronized automatically.
 
@@ -170,4 +170,4 @@ With [SiliconFlow](https://cloud.siliconflow.cn/), obtain a key from its console
 
 Available models, pricing, and free quotas may change. Check the platform's current information, then follow the creation, upload, and retrieval testing steps above.
 
-You can also enable [Web Search](./websearch.md) for current public information. A knowledge base is suited to material you maintain; the two capabilities complement each other.
+For current public information, turn on "Enable Codex Web Search" in the Codex settings. A knowledge base is suited to material you maintain; the two capabilities complement each other.

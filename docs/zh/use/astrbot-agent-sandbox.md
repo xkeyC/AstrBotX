@@ -33,7 +33,7 @@ AstrBot 内置 AI 支持让 Agent 通过执行代码、读写文件等方式访�
 当勾选 “允许联网” 时，AstrBot 会让 Agent 在执行 Shell/Python 时可以访问网络；否则，Agent 执行 Shell/Python 时会被限制网络访问。
 
 > [!TIP]
-> 这里的 “允许联网” 不是指 [网页搜索](/use/websearch) 的搜索功能，而是指 Agent 在执行 Shell/Python 时是否可以通过类似 `curl`, `wget` 等工具访问网络。
+> 这里的 “允许联网” 不是指 Codex 的联网搜索（Codex 设置中的「启用 Codex 联网搜索」），而是指 Agent 在执行 Shell/Python 时是否可以通过类似 `curl`, `wget` 等工具访问网络。
 
 对于 “文件访问范围”，分为 “关闭”、“工作区” 和 “整个环境” 三种：
 

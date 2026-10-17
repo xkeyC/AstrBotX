@@ -19,7 +19,7 @@ AstrBot 的指令通过插件机制注册。为了保持主程序轻量，当前
 - `/stop`：停止当前会话中正在运行的 Agent 任务。
 - `/new`：创建并切换到一个新对话。
 - `/stats`：查看当前会话的 Token 用量统计。
-- `/provider`：查看或切换 LLM Provider。该指令需要管理员权限。
+- `/provider`：查看或切换 TTS / STT Provider。该指令需要管理员权限。
 - `/dashboard_update`：更新 AstrBot WebUI。该指令需要管理员权限。
 - `/set`：设置当前会话变量，常用于 Dify、Coze、DashScope 等 Agent 执行器的输入变量。
 - `/unset`：移除当前会话变量。
@@ -119,25 +119,14 @@ DeerFlow 还会尝试删除旧的远端 thread。
 
 ### `/provider`
 
-`/provider` 用于查看或切换当前 UMO 使用的 Provider（LLM / TTS / STT）。
+`/provider` 用于查看或切换当前 UMO 使用的 TTS / STT Provider。对话模型不在这里选择：它来自 WebUI 的 Codex 页面（或权限规则），因此对话 Provider 既不列出也不切换。
 
 **查看 Provider 列表：**
 
-不带参数时，`/provider` 会列出所有已配置的 Provider，按 LLM、TTS、STT 分类展示。每个 Provider 旁会显示：
-
-- 序号，用于后续切换。
-- Provider ID 和当前使用的模型（LLM 类型）。
-- 可达性标记：`✅` 表示连接正常，`❌` 表示连接失败（附带错误码）。
-- 当前正在使用的 Provider 末尾会标注 `(当前使用)`。
-
-> [!NOTE]
-> 可达性检测需要在 WebUI 的 `配置文件` 中选择对应配置文件，通过顶部搜索按钮搜索 `reachability_check`，开启「提供商可达性检测」并保存配置后才会生效。关闭后不显示可达性标记，列表加载更快。
+不带参数时，`/provider` 会列出已配置的 TTS 和 STT Provider，每个 Provider 旁显示用于切换的序号和 Provider ID，当前正在使用的末尾标注 `👈`。
 
 **切换 Provider：**
 
-使用 `/provider <序号>` 可以将当前会话的 LLM Provider 切换为列表中对应序号的 Provider。
-
-- `/provider <序号>`：切换到指定序号的 LLM Provider。
 - `/provider tts <序号>`：切换到指定序号的 TTS Provider。
 - `/provider stt <序号>`：切换到指定序号的 STT Provider。
 
@@ -155,7 +144,7 @@ DeerFlow 还会尝试删除旧的远端 thread。
 
 - `/plugin`：查看、启用、停用或安装插件。
 - `/op`、`/deop`：添加或移除管理员。
-- `/provider`：查看或切换 LLM Provider。
+- `/provider`：查看或切换 TTS / STT Provider。
 - `/model`：查看或切换模型。
 - `/history`：查看当前对话历史。
 - `/ls`：查看对话列表。

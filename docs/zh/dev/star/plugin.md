@@ -1379,6 +1379,7 @@ class LLMResponse:
 - 获取所有语音识别提供商: `self.context.get_all_stt_providers()`。
 - 获取所有语音合成提供商: `self.context.get_all_tts_providers()`。
 - 获取所有嵌入提供商: `self.context.get_all_embedding_providers()`。
+- 获取本地多模态服务（local-multimodal-infra）客户端: `self.context.get_local_infra()`，未启用时返回 `None`。见下文。
 
 同步接口 `get_using_stt_provider()` 和 `get_using_tts_provider()` 仍然保留，用于兼容已有插件，但已标记为弃用。
 
@@ -1432,6 +1433,30 @@ class STTProvider(AbstractProvider):
 ```
 
 :::
+
+#### 本地多模态服务（local-multimodal-infra）
+
+本地多模态服务是 AstrBot 的一级服务提供商，地址、令牌和各服务所用模型统一在 WebUI `模型提供商` → `本地多模态服务` 中配置。插件不必再保存自己的地址和令牌，直接取客户端调用：
+
+```py
+infra = self.context.get_local_infra()  # 或 from astrbot.api.local_infra import get_local_infra
+if infra is None:
+    return  # 未启用
+
+wav_path = await infra.synthesize("你好", reference_audio="ref.wav", reference_text="参考音频的文字")
+result = await infra.transcribe("voice.mp3", params={"timestamps": True})  # result["text"], result["segments"]
+vectors = await infra.embed(["文本 A", "文本 B"], input_type="passage")
+ranked = await infra.rerank("问题", ["文档 1", "文档 2"], top_n=1)
+verdict = await infra.moderate("一段文字")
+lines = await infra.ocr_lines("page.png")
+
+# 任意任务类型（服务器 list_models 列出的 task kind），文件按角色上传，产出的文件用 download 保存
+output = await infra.run_task("object.detect", model="yolo11n.onnx", files={"image": "photo.jpg"})
+```
+
+- 未指定 `model` 时使用该服务在 WebUI 中选定（或自动选用）的模型；`astrbot.api.local_infra.service_model("tts")` 返回某项服务当前解析到的模型与是否可用。
+- 语音识别、语音合成、嵌入、重排序同时以提供商 `local_infra/stt`、`local_infra/tts`、`local_infra/embedding`、`local_infra/rerank` 出现，可像其他提供商一样通过 `get_provider_by_id` 获取。
+- 请求失败时抛出 `LocalInfraError`。
 
 #### 函数工具
 

@@ -46,12 +46,23 @@ This fork replaces AstrBot's agent loop with [OpenAI Codex](https://github.com/o
 embedded in the same process through a pyo3 binding
 ([xkeyC/codex_for_astrbot](https://github.com/xkeyC/codex_for_astrbot)). AstrBot keeps
 everything it is good at -- platform adapters, the message pipeline, plugins, personas,
-the WebUI -- and Codex does the agent orchestration and execution. `codex` is the only
-agent runner here; existing `local` runner configurations are migrated to it.
+the WebUI -- and Codex does the agent orchestration. `codex` is the only agent runner here;
+`local`, Dify, Coze, DashScope and DeerFlow runner configurations are migrated to it (the
+previous file is kept as `*.pre-codex.json`).
 
-The binding is a hard dependency and **builds from source**, so installing this fork needs
-a Rust toolchain. Set `CODEX_ASTRBOT_WITH_CODEX=1` to also build the `codex` executable,
-which native command execution needs (nothing else does).
+The binding is a hard dependency and **builds from source**, so installing this fork needs a
+Rust toolchain (see [Installing this fork](#installing-this-fork)).
+
+### Models and providers
+
+The model, its provider, reasoning effort and instructions are set on the WebUI's **Codex**
+page: sign in with a ChatGPT account or an API key, or add OpenAI-compatible providers. A
+provider can use the Responses API or, for third-party services that only speak Chat
+Completions, the chat wire; per-provider options cover extra headers and body fields, the
+compaction mode (auto / local / remote) and model metadata (context window, auto-compaction
+limit, reasoning levels, image input). AstrBot's own chat model providers are no longer
+configured on the providers page: plugins' LLM calls are answered by Codex, unless a plugin
+names a chat provider that is still in the config.
 
 ### Code mode
 
@@ -60,40 +71,41 @@ only `exec` and `wait`, and the model reaches AstrBot's tools by writing JavaScr
 calls them in a separate V8 host process. Plugin, MCP and builtin tools are registered as
 deferred dynamic tools, so their schemas never enter the prompt prefix at all.
 
-That has two consequences worth knowing:
-
 | Scenario | AstrBot local runner | Codex (code mode) |
 | --- | --- | --- |
 | 5 tools, estimated tokens | 81.1k | 45.6k (**-44%**) |
 | 45 tools, estimated tokens | 234.4k | 45.6k (**-81%**) |
 
 Codex's prompt cost does not grow with the number of tools, and a chain of dependent calls
-collapses into one `exec` round trip instead of one per call. It also means per-sender tool
-filtering is free: hiding a tool from someone changes nothing in the cached prefix.
+collapses into one `exec` round trip instead of one per call. Per-sender tool filtering is
+free as well: hiding a tool from someone changes nothing in the cached prefix.
 
 ### Per-sender permission rules
 
-`permission_rules` in the config replaces the DynamicPersona plugin. Each rule matches
-senders (`<group>/<sender>`, `p_<sender>`, `g_<group>`, `role:admin`, `*`) and can set the
-persona and model, allow or deny tools and MCP servers, and grant native command execution
-or global-memory writes. Denied tools are enforced when called and, under code mode, are
-also left out of the set the model can see.
+`permission_rules` (WebUI: **Permission rules**) replaces the DynamicPersona plugin. Each rule
+matches senders (`<group>/<sender>`, `p_<sender>`, `g_<group>`, `role:admin`, `*`) and can set
+the persona and model, allow or deny tools and MCP servers, grant global-memory writes, and
+limit request rates and scheduled tasks. Denied tools are enforced when called and, under
+code mode, are also left out of the set the model can see.
 
 ### Execution
 
-Codex's own shell is off by default: AstrBot supplies the execution tools instead.
+Codex's own shell is off: AstrBot supplies the execution tools, run by its computer-use
+runtime (`provider_settings.computer_use_runtime`, the single execution switch).
 
-- `exec_command` / `write_stdin` -- the pair Codex models are trained on, backed by real
-  tmux PTY sessions so a command that asks for confirmation or opens a REPL behaves the way
-  it would for a person. A session left running is polled to completion in the background and
-  its result is posted back to the chat.
+- `exec_command` / `write_stdin` -- the pair Codex models are trained on, backed by tmux PTY
+  sessions so a command that asks for confirmation or opens a REPL behaves the way it would
+  for a person. A session left running is polled to completion in the background and its
+  result is posted back to the chat.
 - `apply_patch` -- Codex's native patch format.
-- `shipyard_mode` -- every agent file operation happens inside the
+- `local` runtime -- commands and file edits follow the role's Local permission policy
+  (filesystem scope, execution, network; isolated with bubblewrap / Seatbelt where required).
+- `sandbox` runtime -- every agent file operation happens inside the
   [Shipyard Neo](https://github.com/AstrBotDevs/astrbot-shipyard-neo) sandbox, including
-  skills; Codex never touches the host filesystem and is only an orchestrator.
+  skills; the host filesystem is never touched.
 
-With native execution enabled, every command raises an approval that AstrBot answers from
-the sender's permission rule.
+Web search is Codex's own (**Codex** page); AstrBot's built-in web search providers are
+removed.
 
 ### Memories
 
@@ -109,25 +121,58 @@ One chat is one Codex thread and runs one turn at a time. A follow-up from the s
 turn is running is steered into it and answered in the same reply; messages from anyone else
 queue behind it, up to `max_queued_turns`.
 
+### Realtime voice
+
+Mumble channels (built-in adapter), QQ calls ([qq-voice-call](https://github.com/xkeyC/astrbot-qq-voice-call)
+plugin with a NapCat bridge) and VRChat rooms (a plugin) can talk with the bot. The voice
+backend is chosen on the **Codex** page: Codex's built-in realtime (an OpenAI realtime
+model) or a local-multimodal-infra server (VAD, speech recognition, wake word, speech
+synthesis) with a Codex model doing the talking. Each voice call is paired with its chat:
+longer tasks are handed to the chat's thread, and the transcript keeps what the model heard.
+
+### Local multimodal service (local-multimodal-infra)
+
+[local-multimodal-infra](https://github.com/mercallureAI/local-multimodal-infra) is a
+first-tier service: **Providers → Local service** holds its address and token, lists the
+server's models and picks one per service from what the server has enabled -- speech
+recognition, speech synthesis, embeddings, rerank, content moderation and realtime voice;
+each service can be switched off. The first four appear as providers `local_infra/…`
+wherever a provider is chosen (an automatically chosen embedding model is kept, so a
+knowledge base stays on one model). Plugins call the same server with
+`Context.get_local_infra()` (or `astrbot.api.local_infra`): `synthesize`, `transcribe`,
+`embed`, `rerank`, `moderate`, `ocr_lines`, `detect_objects` and a generic `run_task`.
+
+### Content moderation
+
+With the local service's moderation on, what goes to the cloud model is checked first: user
+messages and their images, group history (flagged messages are left out, not the request),
+tool results (only flagged parts are removed) and what a voice call hears. Each platform
+instance chooses `enabled`, `text_only` or `disabled`.
+
 ### Telemetry
 
 Codex reports skill invocations, MCP calls and thread metadata to `chatgpt.com` whenever an
 account is signed in. This fork pins `analytics.enabled = false` and
 `otel.metrics_exporter = "none"`, because a chat bot runs other people's conversations.
-`thread_config` can turn it back on.
+`thread_config` can turn it back on. Requests identify as `codex_exec` with a
+`xkeyC/codex_for_astrbot` User-Agent tag.
 
 ## Fork Behavior Differences
 
-This fork intentionally differs from upstream AstrBot in a few areas. The agent itself is
-covered by [Codex-Native Agent Runner](#codex-native-agent-runner) above; the rest are:
+This fork intentionally differs from upstream AstrBot in a few more areas:
 
-1. Chat model calls are forced through streaming internally, even when callers use the non-streaming chat API.
-2. Docker and git/wheel installs build and prefer the bundled dashboard from this repository, so local dashboard changes are used instead of an existing upstream `data/dist` with the same version.
-3. MCP server connection tests use the configured proxy settings where applicable.
-4. The dashboard persona manager supports cloning an existing persona.
-5. Plugins can use event-level LLM overrides through `AstrMessageEvent.set_llm_overrides()` to select persona/provider/model for one request without changing session configuration. Forced session persona bindings still take precedence over event-level persona overrides.
-6. Shipyard Neo auto-start mode propagates AstrBot's global proxy settings into the managed Bay container and recreates that container when the managed proxy environment changes, so new sandbox Python/Shell sessions inherit the updated proxy.
-7. Persona tool allowlists cover every tool the model can reach, and a call the active persona does not allow is rejected even if the model constructs it by hand.
+1. Removed because Codex covers them: subagent orchestration, AstrBot's built-in web search
+   providers, the third-party agent runners, the Python execution tool, the per-session chat
+   model override and `/provider` chat model switching (`/provider` handles TTS / STT).
+   Settings that only the removed runner read are dropped from configs on load or save.
+2. Chat model calls are forced through streaming internally, even when callers use the non-streaming chat API.
+3. Docker and git/wheel installs build and prefer the bundled dashboard from this repository, so local dashboard changes are used instead of an existing upstream `data/dist` with the same version.
+4. MCP server connection tests use the configured proxy settings where applicable.
+5. The dashboard persona manager supports cloning an existing persona.
+6. Plugins can use event-level LLM overrides through `AstrMessageEvent.set_llm_overrides()` to select persona/provider/model for one request without changing session configuration. Forced session persona bindings still take precedence over event-level persona overrides.
+7. Shipyard Neo auto-start mode propagates AstrBot's global proxy settings into the managed Bay container and recreates that container when the managed proxy environment changes, so new sandbox Python/Shell sessions inherit the updated proxy.
+8. Persona tool allowlists cover every tool the model can reach, and a call the active persona does not allow is rejected even if the model constructs it by hand.
+9. OneBot v11 through NapCatQQ can react to a message it is about to answer with an emoji (`platform_specific.aiocqhttp.pre_ack_emoji`, group chats).
 
 These changes are maintained for this fork and may not match upstream behavior.
 
@@ -137,12 +182,12 @@ These changes are maintained for this fork and may not match upstream behavior.
 
 1. 💯 Free & Open Source.
 2. ✨ AI LLM Conversations, Multimodal, Agent, MCP, Skills, Knowledge Base, Persona Settings, Auto Context Compression.
-3. 🤖 Supports integration with Dify, Alibaba Cloud Bailian, Coze, and other agent platforms.
+3. 🤖 Codex as the agent runtime: code mode, per-sender permission rules, per-chat memories, realtime voice.
 4. 🌐 Multi-Platform: QQ, WeChat Work, Feishu, DingTalk, WeChat Official Accounts, Telegram, Slack, and [more](#supported-messaging-platforms).
 5. 📦 Plugin Extensions with 1000+ plugins available for one-click installation.
 6. 🛡️ [Agent Sandbox](https://docs.astrbot.app/use/astrbot-agent-sandbox.html) for isolated, safe execution of code, shell calls, and session-level resource reuse.
 7. 💻 WebUI Support.
-8. 🌈 Web ChatUI Support with built-in agent sandbox and web search.
+8. 🌈 Web ChatUI Support with the agent sandbox and Codex web search.
 9. 🌐 Internationalization (i18n) Support.
 
 ## Quick Start
@@ -159,8 +204,9 @@ pip install "astrbot @ git+https://github.com/xkeyC/AstrBotX@codex_agent_runtime
 
 The first install compiles the Rust workspace and downloads a prebuilt V8 for the code-mode
 host, so expect it to take a while; later installs of the same commit reuse pip's wheel
-cache. Add `CODEX_ASTRBOT_WITH_CODEX=1` to also build the `codex` executable if you want
-native command execution.
+cache. The binding is pinned to a commit in `pyproject.toml`; see its
+[README](https://github.com/xkeyC/codex_for_astrbot/tree/astrbot/codex-rs/astrbot-py) for
+build options. Then sign in or add a model provider on the WebUI's **Codex** page.
 
 ### One-Click Cloud Deployment (RainYun)
 
@@ -249,6 +295,12 @@ Connect AstrBot to your favorite chat platform.
 
 ## Supported Model Services
 
+In this fork the chat model is configured on the **Codex** page (ChatGPT sign-in, an API
+key, or an OpenAI-compatible provider over the Responses API or Chat Completions): the LLM
+services below are used there through their OpenAI-compatible APIs. Speech, embeddings,
+rerank and moderation can also come from a
+[local-multimodal-infra](https://github.com/mercallureAI/local-multimodal-infra) server.
+
 | Service | Type |
 |---------|---------------|
 | OpenAI and Compatible Services | LLM Services |
@@ -268,9 +320,6 @@ Connect AstrBot to your favorite chat platform.
 | [PPIO Cloud](https://ppio.com/user/register?invited_by=AIOONE) | LLM Services |
 | ModelScope | LLM Services |
 | OneAPI | LLM Services |
-| Dify | LLMOps Platforms |
-| Alibaba Cloud Bailian Applications | LLMOps Platforms |
-| Coze | LLMOps Platforms |
 | OpenAI Whisper | Speech-to-Text Services |
 | SenseVoice | Speech-to-Text Services |
 | Xiaomi MiMo Omni | Speech-to-Text Services |

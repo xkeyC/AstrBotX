@@ -2,17 +2,9 @@
 
 The Agent Runner is a component in AstrBot used to execute Agents.
 
-Starting from version v4.7.0, we have migrated three providers—Dify, Coze, and Alibaba Cloud Bailian Application—to the Agent Runner layer, reducing some conflicts with AstrBot's existing features. Rest assured, if you upgrade from an older version to v4.7.0, you don't need to take any action as AstrBot will automatically migrate for you. Later versions also added DeerFlow support as an Agent Runner provider.
+This build has a single Agent Runner: **Codex**. AstrBot drives Codex in-process to run the agent loop and exposes plugin tools to the model as Codex dynamic tools; personas, knowledge bases, the execution environment and the proactive agent are still provided by AstrBot.
 
-AstrBot currently supports five Agent Runners:
-
-- AstrBot Built-in Agent Runner
-- Dify Agent Runner
-- Coze Agent Runner
-- Alibaba Cloud Bailian Application Agent Runner
-- DeerFlow Agent Runner
-
-By default, the AstrBot Built-in Agent Runner is the default runner.
+The former built-in Agent Runner and the Dify, Coze, Alibaba Cloud Bailian Application and DeerFlow runners have been removed. Configuration files that used them are migrated to Codex's defaults on startup (the previous configuration is backed up next to it as `*.pre-codex.json`); the default persona set for the built-in runner is kept.
 
 ## Why Abstract the Agent Runner
 
@@ -35,24 +27,12 @@ Platforms like Dify, Coze, Bailian Application, and DeerFlow have this loop buil
 
 ## Usage
 
-AstrBot uses its built-in AI by default. Select a chat model under **Config → AI → Model**, and configure personas, knowledge bases, and tools as needed.
+1. Open **Configuration** in the WebUI sidebar, select the configuration file to edit, open **AI**, and make sure **Enable AI** is on.
+2. Under **Codex Settings**, configure the tool mode, proxy, memories, timeouts and other runtime options (the execution environment is the runtime chosen under **Agent Computer Use**); configure the capabilities AstrBot provides under **Persona**, **Knowledge Base**, **Agent Computer Use** and **Proactive Agent**.
+3. The model, model provider, reasoning effort, system prompt and extra developer instructions are set on the **Codex** page of the WebUI (written to the default configuration file); the **Configuration** page no longer repeats them.
+4. Click **Save** in the lower-right corner to apply the changes.
 
-To connect an external application, select the execution mode and enter its connection settings directly in the current configuration profile:
+When **Codex Proxy** is set, all of Codex's traffic goes through it, taking precedence over the **HTTP Proxy** on the **System Settings** page; when it is empty, Codex uses the `http_proxy`-style environment variables that the HTTP proxy is written to, and connects directly if none is set.
 
-1. Open **Config** in the WebUI sidebar, select the profile to edit, and open **AI**.
-2. Click **More actions** (`…`) beside the AI heading, then **Change Execution Mode**.
-3. Choose Dify, Coze, Alibaba Cloud Bailian, or DeerFlow, read and check the configuration reset acknowledgement, then click **Use This Mode**.
-4. Make sure **Enable AI** is on. Enter the API key, application ID, API endpoint, and other settings shown for that mode. See the integration guides below for the fields.
-5. Click **Save Configuration** at the bottom right to apply the changes.
-
-> [!IMPORTANT]
-> Switching modes replaces the current execution mode's settings with the new mode's defaults. Switching back requires configuring it again. To preserve the original settings, copy the profile through **Manage Configurations...** before switching.
-
-The current WebUI does not require creating an Agent Runner under **Providers** or selecting a runner provider ID. Each profile stores its own execution mode and connection settings. Use separate profiles when different bots need different applications.
-
-## Integration Guides
-
-- [Dify](../providers/agent-runners/dify.md)
-- [Coze](../providers/agent-runners/coze.md)
-- [Alibaba Cloud Bailian Application](../providers/agent-runners/dashscope.md)
-- [DeerFlow](../providers/agent-runners/deerflow.md)
+> [!NOTE]
+> The following settings of the former built-in Agent have been removed; they had no effect on Codex: chat model, fallback chat models, retries on error, image caption model (Codex reads images itself), context management (Codex manages its own context, see [Context Compression](./context-compress.md)), maximum tool call steps, tool call timeout and tool schema mode (Codex's timeouts are under **Codex Settings**), sanitizing history by model capability, showing tool calls and their results, merging intermediate agent messages, input image maximum edge length, the quoted image fallback limit, and **Safety Mode** under **Persona** (Codex uses **Inject Safety Prompt** under **Codex Settings**). **Image Caption Prompt** moved to **Group Chat Context Awareness** and only applies to images in group chat records.

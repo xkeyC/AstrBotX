@@ -2,12 +2,12 @@
 
 Custom rules let you make exceptions for **one specific session** without duplicating an entire configuration profile for every group or private chat. For example:
 
-- Give a work group a professional persona and a specific chat model while other sessions keep their defaults.
+- Give a work group a professional persona and a specific TTS model while other sessions keep their defaults.
 - Let one group use plugin commands without automatic AI replies.
 - Disable voice replies or selected plugins in a private chat.
 - Choose specific knowledge bases for one session.
 
-These rules take priority over the corresponding settings in the session's profile. Settings without an override keep their normal behavior. Rules do not create models, personas, plugins, or knowledge bases; set up those resources on their own pages first.
+These rules take priority over the corresponding settings in the session's profile. The chat model is not set here: the agent's model comes from the Codex page of the WebUI (or from a permission rule). Settings without an override keep their normal behavior. Rules do not create models, personas, plugins, or knowledge bases; set up those resources on their own pages first.
 
 ## Identify the Session (UMO)
 
@@ -23,7 +23,7 @@ Send `/sid` in the group or private chat you want to configure, then compare its
 1. Have a conversation with the bot in the target group or private chat so AstrBot records the source.
 2. Open **Custom Rules** in the WebUI sidebar.
 3. Click **Add Rule**, select the target under **Select Session**, and click **Next**. If the session already has rules, use its edit button in the list instead.
-4. Change the settings in **Edit Custom Rules**, for example the chat model under **Provider Configuration**.
+4. Change the settings in **Edit Custom Rules**, for example the TTS provider under **Speech Providers (STT / TTS)**.
 5. Click **Save beneath the section you changed**. Service, provider, persona, plugin, and knowledge base sections save separately. Save each changed section.
 6. Send a new message in the target session to check the result.
 
@@ -39,7 +39,7 @@ Saved rules take effect without restarting AstrBot. The older **Session Manageme
 | Service Configuration | Enable LLM | Turning this off stops normal AI conversation processing for the session. Plugin commands can still work; each plugin controls its own behavior. |
 | Service Configuration | Enable TTS | Controls whether the session can use synthesized speech output. A TTS model and the relevant profile settings must already be configured. |
 | Service Configuration | Custom Name | Adds a note to help identify the session without changing its UMO. |
-| Provider Configuration | Chat Provider, STT Provider, TTS Provider | Selects configured models for this session, or **Follow Config**. |
+| Speech Providers (STT / TTS) | STT Provider, TTS Provider | Selects configured speech models for this session, or **Follow Config**. The former chat provider override is removed: it never affected Codex, and the chat provider choices left in sessions are cleared on upgrade. |
 | Persona Configuration | Select Persona | Forces a persona for this session. Leaving it empty removes the forced-persona rule. |
 | Plugin Configuration | Disabled Plugins | Disables selected plugins in this session without affecting other sessions. |
 | Knowledge Base Configuration | Select Knowledge Bases, Top K Results | Overrides the profile's knowledge base selection and number of retrieval results. |
@@ -52,7 +52,7 @@ See [WebUI](./webui.md), [Plugins](./plugin.md), and [Knowledge Base](./knowledg
 
 A **profile** configures a complete set of bot behavior, such as models, wake conditions, message processing, and tools. A **custom rule** changes selected settings for an individual session.
 
-For example, two groups may use the `default` profile while only group A needs a different chat model. Add a model rule for group A without affecting group B. If you later change the chat model in `default`, group A still uses its override until you remove the rule or select **Follow Config**.
+For example, two groups may use the `default` profile while only group A needs a different TTS model. Add a speech provider rule for group A without affecting group B. If you later change the TTS model in `default`, group A still uses its override until you remove the rule or select **Follow Config**.
 
 A rule cannot load a plugin that has been disabled globally. Enable it on the **Plugins** page first, then use custom rules to disable it in selected sessions.
 
@@ -60,7 +60,7 @@ A rule cannot load a plugin that has been disabled globally. Enable it on the **
 
 Search for the session or its note in the list, then use the edit button. Each section has its own save button.
 
-- **Models:** Select **Follow Config** and save to remove that model override.
+- **Speech providers:** Select **Follow Config** and save to remove that model override.
 - **Persona:** Clear the selection and save to remove the forced-persona rule and restore normal persona selection.
 - **Plugins:** Remove a plugin from the disabled list and save. Clearing the list removes the session's plugin-disable rule.
 - **Knowledge bases:** Clear the selection and save to remove the session-level rule and restore the profile's knowledge base settings. **This does not disable knowledge bases.**
@@ -73,7 +73,7 @@ Deleting rules does not delete models, plugins, knowledge bases, or chat history
 Use **Batch Operations** below the rules list to change multiple sessions:
 
 1. Select sessions in the list, or choose all sessions, all groups, all private chats, or a custom group under **Apply to**.
-2. Select the LLM or TTS status or chat model to change.
+2. Select the LLM or TTS status or TTS model to change.
 3. Click **Apply Changes**, then check the target sessions.
 
 Only the selected settings are changed. Start with a few selected sessions before applying changes to a wider scope.

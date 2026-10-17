@@ -4,5 +4,5 @@
 
 ![image](https://files.astrbot.app/docs/source/images/astrbot-agent-runner/image.png)
 
-在内置 Agent 执行器下，您可以使用 AstrBot 的 [MCP 服务器](/use/mcp)、[知识库](/use/knowledge-base)、[网页搜索](/use/websearch)、人格功能。
+在内置 Agent 执行器下，您可以使用 AstrBot 的 [MCP 服务器](/use/mcp)、[知识库](/use/knowledge-base)、人格功能。
 

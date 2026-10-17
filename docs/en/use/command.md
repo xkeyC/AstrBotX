@@ -19,7 +19,7 @@ The following commands are shipped with AstrBot and loaded by default:
 - `/stop`: Stop Agent tasks currently running in the current session.
 - `/new`: Create and switch to a new conversation.
 - `/stats`: View token usage statistics for the current conversation.
-- `/provider`: View or switch LLM Provider. This command requires admin permission.
+- `/provider`: View or switch the TTS / STT Provider. This command requires admin permission.
 - `/dashboard_update`: Update AstrBot WebUI. This command requires admin permission.
 - `/set`: Set a session variable, commonly used for Agent Runner input variables such as Dify, Coze, or DashScope.
 - `/unset`: Remove a session variable.
@@ -125,25 +125,14 @@ If you are not in a conversation, AstrBot will prompt you to create one with `/n
 
 ### `/provider`
 
-`/provider` views or switches the Provider (LLM / TTS / STT) used by the current UMO.
+`/provider` views or switches the TTS / STT Provider used by the current UMO. The chat model is not chosen here: it comes from the Codex page of the WebUI (or from a permission rule), so chat Providers are neither listed nor switched.
 
 **Viewing the Provider list:**
 
-With no arguments, `/provider` lists all configured Providers grouped by LLM, TTS, and STT. Each Provider shows:
-
-- An index number for switching.
-- Provider ID and the model currently in use (LLM type).
-- Reachability status: `✅` means the connection is healthy, `❌` means a connection failure (with an error code).
-- The currently active Provider is marked with `(currently in use)` at the end.
-
-> [!NOTE]
-> Reachability checks must be enabled in WebUI by selecting the relevant profile in `Config`, using the search button at the top to search for `reachability_check`, enabling the setting, and saving the configuration. When disabled, reachability markers are not shown and the list loads faster.
+With no arguments, `/provider` lists the configured TTS and STT Providers. Each Provider shows an index number for switching and its Provider ID; the one currently in use is marked with `👈`.
 
 **Switching Providers:**
 
-Use `/provider <index>` to switch the current session's LLM Provider to the Provider at the given index in the list.
-
-- `/provider <index>`: Switch to the LLM Provider at the given index.
 - `/provider tts <index>`: Switch to the TTS Provider at the given index.
 - `/provider stt <index>`: Switch to the STT Provider at the given index.
 
@@ -159,7 +148,7 @@ This plugin provides extended commands for plugin management, Provider managemen
 
 - `/plugin`: View, enable, disable, or install plugins.
 - `/op`, `/deop`: Add or remove admins.
-- `/provider`: View or switch LLM Providers.
+- `/provider`: View or switch TTS / STT Providers.
 - `/model`: View or switch models.
 - `/history`: View current conversation history.
 - `/ls`: View the conversation list.

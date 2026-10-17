@@ -54,33 +54,31 @@ The default AstrBot configuration is as follows:
     "provider": [],
     "provider_settings": {
         "enable": True,
-        "default_provider_id": "",
-        "default_image_caption_provider_id": "",
         "image_caption_prompt": "Please describe the image using Chinese.",
-        "provider_pool": ["*"],  # "*" means use all available providers
         "wake_prefix": "",
-        "web_search": False,
-        "websearch_provider": "tavily",
-        "websearch_tavily_key": [],
-        "websearch_bocha_key": [],
-        "websearch_brave_key": [],
-        "websearch_deepseek_key": [],
-        "websearch_serpapi_key": [],
-        "web_search_link": False,
         "display_reasoning_text": False,
         "identifier": False,
         "group_name_display": False,
         "datetime_system_prompt": True,
-        "default_personality": "default",
-        "persona_pool": ["*"],
         "prompt_prefix": "{{prompt}}",
-        "max_context_length": -1,
-        "dequeue_context_length": 1,
         "streaming_response": False,
-        "show_tool_use_status": False,
-        "streaming_segmented": False,
-        "max_agent_step": 128,
-        "tool_call_timeout": 120,
+        "quoted_message_parser": {
+            "max_component_chain_depth": 4,
+            "max_forward_node_depth": 6,
+            "max_forward_fetch": 32,
+            "warn_on_action_failure": False,
+        },
+        "unsupported_streaming_strategy": "realtime_segmenting",
+        # ... plus the Computer Use, sandbox and proactive agent settings
+    },
+    "agent_runner": {
+        "runner_type": "codex",
+        "config": {
+            "persona_id": "default",
+            "safety_mode": False,
+            "proxy": "",
+            # ... other Codex settings
+        },
     },
     "provider_stt_settings": {
         "enable": False,
@@ -117,13 +115,20 @@ The default AstrBot configuration is as follows:
     "t2i_active_template": "base",
     "http_proxy": "",
     "no_proxy": ["localhost", "127.0.0.1", "::1"],
-    "content_moderation_url": "",
-    "content_moderation_token": "",
-    "content_moderation_blocked_reply": "这条内容无法处理。",
-    "content_moderation_threshold": 0.9,
-    "content_moderation_nsfw_threshold": 0.5,
-    "content_moderation_nsfw_labels": ["low", "medium", "high"],
-    "content_moderation_categories": ["violent", "illegal", "sexual", "pii", "self-harm", "unethical", "political", "copyright", "jailbreak"],
+    "local_infra": {
+        "enable": False,
+        "base_url": "http://127.0.0.1:17890",
+        "token": "",
+        "timeout": 120,
+        "services": {
+            "stt": {"enable": True, "model": ""},
+            "tts": {"enable": True, "model": "", "reference_audio": "", "reference_text": ""},
+            "embedding": {"enable": True, "model": ""},
+            "rerank": {"enable": True, "model": ""},
+            "moderation": {"enable": True, "blocked_reply": "这条内容无法处理。", "threshold": 0.9, "nsfw_threshold": 0.5, "nsfw_labels": ["low", "medium", "high"], "categories": ["violent", "illegal", "sexual", "pii", "self-harm", "unethical", "political", "copyright", "jailbreak"]},
+            "realtime_voice": {"enable": True}
+        }
+    },
     "dashboard": {
         "enable": True,
         "username": "astrbot",
@@ -153,7 +158,6 @@ The default AstrBot configuration is as follows:
     "persona": [],  # deprecated
     "timezone": "Asia/Shanghai",
     "callback_api_base": "",
-    "default_kb_collection": "",  # Default knowledge base name
     "plugin_set": ["*"],  # "*" means use all available plugins, empty list means none
 }
 ```
@@ -273,77 +277,17 @@ General settings for LLM providers.
 
 Whether to enable LLM chat. Default is `true`.
 
-#### `provider_settings.default_provider_id`
-
-Default conversation model provider ID. Must be a provider ID already configured in the `provider` list. If empty, the first provider in the list is used.
-
-#### `provider_settings.default_image_caption_provider_id`
-
-Default image captioning model provider ID. Must be a provider ID already configured in the `provider` list. If empty, image captioning is disabled.
-
-This means when a user sends an image, AstrBot uses this provider to generate a text description, which is then used as part of the conversation context. This is useful when the conversation model doesn't support multimodal input.
-
 #### `provider_settings.image_caption_prompt`
 
-Prompt template for image captioning. Default is `"Please describe the image using Chinese."`.
-
-#### `provider_settings.provider_pool`
-
-*This configuration item is not yet in actual use.*
+Prompt for image captions in group chat context awareness, set in the WebUI under `Group Chat Context Awareness` next to the group chat image caption model (`provider_ltm_settings.image_caption_provider_id`). Default is `"Please describe the image using Chinese."`.
 
 #### `provider_settings.wake_prefix`
 
 Extra trigger condition for LLM chat. For example, if `chat` is filled, messages must start with `/chat` to trigger LLM chat, where `/` is the bot's wake prefix. This is a measure to prevent abuse.
 
-#### `provider_settings.web_search`
-
-Whether to enable AstrBot's built-in web search capability. Default is `false`. When enabled, the LLM may automatically search the web and answer based on the content.
-
-#### `provider_settings.websearch_provider`
-
-Web search provider type. Default is `tavily`. Currently supports `serpapi`, `deepseek`, `tavily`, `bocha`, `baidu_ai_search`, `brave`, `firecrawl`, `exa`, and `anysearch`.
-
-- `serpapi`: Uses SerpApi Google Search, Google Images Light, Google Finance, and Google Scholar.
-- `deepseek`: Uses the DeepSeek Search API.
-- `tavily`: Uses the Tavily search engine.
-- `bocha`: Uses the BoCha search engine.
-- `baidu_ai_search`: Uses Baidu AI Search (MCP).
-- `brave`: Uses Brave Search API.
-- `firecrawl`: Uses the Firecrawl Search API.
-- `exa`: Uses the Exa Search API.
-- `anysearch`: Uses the AnySearch API.
-
-#### `provider_settings.websearch_tavily_key`
-
-API Key list for the Tavily search engine. Required when using `tavily` as the web search provider.
-
-#### `provider_settings.websearch_bocha_key`
-
-API Key list for the BoCha search engine. Required when using `bocha` as the web search provider.
-
-#### `provider_settings.websearch_brave_key`
-
-API Key list for the Brave search engine. Required when using `brave` as the web search provider.
-
-#### `provider_settings.websearch_firecrawl_key`
-
-API Key list for the Firecrawl search engine. Required when using `firecrawl` as the web search provider.
-
-#### `provider_settings.websearch_deepseek_key`
-
-API Key list for the DeepSeek search engine. Required when using `deepseek` as the web search provider. Can use the same API key as the chat model, but must be configured separately. Multiple keys under the same account share rate limits.
-
-#### `provider_settings.websearch_serpapi_key`
-
-API Key list shared by SerpApi Google Search, Google Images Light, Google Finance, and Google Scholar. Required when using `serpapi` as the web search provider. Obtain a key at [SerpApi](https://serpapi.com/manage-api-key). Multiple keys rotate, with failover on authentication and quota errors.
-
-#### `provider_settings.web_search_link`
-
-Whether to prompt the model to include links to search results in the reply. Default is `false`.
-
 #### `provider_settings.display_reasoning_text`
 
-Whether to display the model's reasoning process in the reply. Default is `false`.
+Whether to prepend the model's reasoning (Codex's reasoning summary) to the reply. Default is `false`.
 
 #### `provider_settings.identifier`
 
@@ -357,47 +301,24 @@ Whether to let the model know the name of the group it's in. Default is `false`.
 
 Whether to include the current machine date and time in the system prompt. Default is `true`.
 
-#### `provider_settings.default_personality`
-
-ID of the default personality to use. Configure personalities in the WebUI.
-
-#### `provider_settings.persona_pool`
-
-*This configuration item is not yet in actual use.*
-
 #### `provider_settings.prompt_prefix`
 
 User prompt. You can use `{{prompt}}` as a placeholder for user input. If no placeholder is provided, it's prepended to the user input.
-
-#### `provider_settings.max_context_length`
-
-When the conversation context exceeds this number, the oldest parts are discarded. One round of chat counts as 1. -1 means no limit.
-
-#### `provider_settings.dequeue_context_length`
-
-The number of conversation rounds to discard each time the `max_context_length` limit is triggered.
 
 #### `provider_settings.streaming_response`
 
 Whether to enable streaming responses. Default is `false`. When enabled, the model's reply is sent to the user in real-time with a typewriter effect. This only takes effect on WebChat, Telegram, and Lark platforms.
 
-#### `provider_settings.show_tool_use_status`
+#### `provider_settings.quoted_message_parser`
 
-Whether to show tool usage status. Default is `false`. When enabled, the model displays the tool name and input parameters when using a tool.
+Limits for parsing quoted and forwarded messages: `max_component_chain_depth` is the maximum recursion depth of a Reply component chain, `max_forward_node_depth` the maximum recursion depth of forwarded nodes, `max_forward_fetch` the maximum number of recursive `get_forward_msg` calls, and `warn_on_action_failure` whether to log a warning when every fetch fails.
 
-#### `provider_settings.streaming_segmented`
-
-Whether platforms that don't support streaming responses should fall back to segmented replies. Default is `false`. This means if streaming is enabled but the platform doesn't support it, segmented multiple replies are used instead.
-
-#### `provider_settings.max_agent_step`
-
-Limit on the maximum number of Agent steps. Default is `128`. Each tool call by the model counts as one step.
-
-#### `provider_settings.tool_call_timeout`
-
-Added in `v4.3.5`
-
-Maximum timeout for tool calls (seconds), default is `60` seconds.
+> [!NOTE]
+> The following settings only affected the removed built-in Agent runner and have been deleted. Old values under `provider_settings` and at the top level are dropped on load; old values under `agent_runner.config` are dropped when the configuration is saved (and ignored at runtime):
+>
+> - Under `provider_settings`: `default_image_caption_provider_id` (Codex reads images itself), `image_compress_options`, `show_tool_use_status`, `show_tool_call_result`, `buffer_intermediate_messages`, `max_quoted_fallback_images`, `file_extract`, `provider_pool`, `persona_pool`.
+> - Under `agent_runner.config`: the old `model` object (chat model provider, fallback models, retries; Codex's `model` is a model name string), `persona` (the default persona is now `agent_runner.config.persona_id`, safety mode is `agent_runner.config.safety_mode`), `compression` (context compression; Codex manages its own context) and `misc` (tool call steps, timeout, tool schema mode and so on).
+> - The top-level `default_kb_collection` (use `kb_names` for knowledge bases).
 
 #### `provider_stt_settings`
 
@@ -455,6 +376,15 @@ Whether to automatically describe group chat images and inject the descriptions 
 - `method`: Method for active replies. Option is `possibility_reply`.
 - `possibility_reply`: Probability of an active reply. Default is `0.1`. Only applicable when `method` is `possibility_reply`.
 - `whitelist`: ID whitelist for active replies. Only IDs in this list will trigger active replies. Empty means no whitelist filter. You can use the `/sid` command to get the session ID on a platform.
+
+### `agent_runner`
+
+The Agent runner. Codex is the only runner (`runner_type` is always `codex`); it is configured in the WebUI under `Configuration` → `AI`. Common fields:
+
+- `config.persona_id`: the default persona, used when a conversation has no persona of its own. Default is `default`. A persona set in Session Management or bound by a permission rule takes precedence.
+- `config.safety_mode`: whether to inject the safety mode prompt. Default is `false`.
+- `config.proxy`: Codex's proxy (`socks5://`, `socks5h://` or `http://`). When set, all of Codex's traffic goes through it and it takes precedence over [`http_proxy`](#http_proxy); when empty, Codex uses the `http_proxy`-style environment variables (the `http_proxy` setting is written there too) and connects directly if none is set.
+- `config.model`, `config.model_provider`, `config.reasoning_effort`, `config.base_instructions`, `config.developer_instructions`: the model, model provider, reasoning effort and prompts, set on the `Codex` page of the WebUI.
 
 ### `content_safety`
 
@@ -516,37 +446,23 @@ Whether to enable the file service. Default is `false`. When enabled, the bot pr
 
 HTTP proxy. E.g., `http://localhost:7890`. When AstrBot runs in Docker, use an address reachable from the AstrBot container. See [Deploy with Docker](/en/deploy/astrbot/docker.md).
 
+AstrBot sets this proxy through environment variables, and Codex uses it as well; when a Codex proxy (`agent_runner.config.proxy`) is set, Codex uses only that one.
+
 ### `no_proxy`
 
 List of addresses that bypass the proxy. E.g., `["localhost", "127.0.0.1"]`.
 
-### `content_moderation_url`
+### `local_infra`
 
-Content moderation service URL (compatible with OpenAI's `POST /v1/moderations`). Empty: no moderation. See [Content Moderation](/use/content-moderation).
+The local multimodal service ([local-multimodal-infra](https://github.com/xkeyC/local-multimodal-infra)), set in the WebUI under `Providers` → `Local service`.
 
-### `content_moderation_token`
+- `enable` / `base_url` / `token` / `timeout`: on or off, the server's HTTP address (without `/v1`), its inference token (`Authorization: Bearer`), seconds one request may take.
+- `services`: what AstrBot uses it for, each can be switched off; an empty `model` takes the server's first enabled model of the kind.
+  - `stt` / `tts` / `embedding` / `rerank`: the providers `local_infra/stt`, `local_infra/tts`, `local_infra/embedding`, `local_infra/rerank`. `tts.reference_audio` / `tts.reference_text`: the voice to clone (relative to the data directory) and its transcript.
+  - `moderation`: [content moderation](/use/content-moderation): `blocked_reply`, `threshold` (text is flagged when `1 - p(safe)` exceeds it, default `0.9`), `nsfw_threshold` (images, default `0.5`), `nsfw_labels`, `categories` (empty means all).
+  - `realtime_voice`: the realtime voice's local backend connects to `ws://<address>/v1/realtime`.
 
-Token for the content moderation service, sent as `Authorization: Bearer <token>`. Empty: no token.
-
-### `content_moderation_blocked_reply`
-
-What the bot replies when a user's message is blocked. Default `这条内容无法处理。`, also used when empty.
-
-### `content_moderation_threshold`
-
-Text threshold: text is flagged when its unsafe probability (`1 - p(safe)`) is above it. Default `0.9`; lower is stricter.
-
-### `content_moderation_nsfw_threshold`
-
-Image threshold: an image is flagged when the NSFW probabilities of the selected levels add up to more than it. Default `0.5`.
-
-### `content_moderation_nsfw_labels`
-
-Image levels that count: `low` (suggestive), `medium`, `high` (explicit). All three by default; empty uses the service's own setting.
-
-### `content_moderation_categories`
-
-Text categories that are blocked: `violent`, `illegal`, `sexual`, `pii`, `self-harm`, `unethical`, `political`, `copyright`, `jailbreak`. All by default; empty means all.
+The old `content_moderation_*` settings and the realtime voice's `infra_url` / `infra_token` move here on start.
 
 ### `dashboard`
 
@@ -621,6 +537,8 @@ PyPI index URL. Default is `https://mirrors.aliyun.com/pypi/simple/`.
 
 List of configured personalities. Each personality contains `id`, `name`, `description`, and `system_prompt` fields.
 
+The list is kept only so the data migration from v3 can read it.
+
 ### `timezone`
 
 Timezone setting. Please fill in an IANA timezone name, such as Asia/Shanghai. If empty, the system default timezone is used. See all timezones at: [IANA Time Zone Database](https://data.iana.org/time-zones/tzdb-2021a/zone1970.tab).
@@ -629,9 +547,9 @@ Timezone setting. Please fill in an IANA timezone name, such as Asia/Shanghai. I
 
 Base address for the AstrBot API. Used for file services, plugin callbacks, etc. E.g., `http://example.com:6185`. Default is empty, meaning file services and plugin callbacks are disabled.
 
-### `default_kb_collection`
+### `kb_tavily_key`
 
-Default knowledge base name. Used for RAG. If empty, no knowledge base is used.
+Tavily API keys used by the knowledge base's "Import from URL" (Tavily Extract fetches the page text). Only the value in the default profile is read. Web search itself is done by Codex (the "Enable Codex Web Search" setting of the Codex runner) and needs no key.
 
 ### `plugin_set`
 

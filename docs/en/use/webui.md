@@ -18,21 +18,23 @@ These paths use the current default sidebar with a fixed menu order. Extension i
 | Commands / Command Management | Extensions → Handlers → Command |
 | Standalone MCP / Skills entries | Extensions → MCP Servers / Skills |
 | System Settings → Appearance → Customize Sidebar | Removed; the sidebar uses the default menu layout |
-| Custom Rules / Future Tasks / SubAgents | Custom Rules is under the sidebar `System` group; Future Tasks and SubAgents are under the `Extensions` group |
+| Custom Rules / Future Tasks | Custom Rules is under the sidebar `System` group; Future Tasks is under the `Extensions` group |
+| SubAgents | Removed; multi-agent work is handled by Codex itself |
 
 Old log, trace, conversation, and statistics URLs still redirect to the corresponding tabs. Agent runners are now saved in each profile; they are no longer created as model providers. See [Agent Execution Mode](./agent-runner.md) for the setup steps.
 
 ## Documentation Navigation
 
-The **Usage → Plugins** documentation group contains Plugins, MCP, and Skills. **Usage → AstrBot Built-in AI** contains Agent Sandbox, SubAgent Orchestration, Proactive Capabilities, Web Search, Knowledge Base, and Context Compression. Their URLs remain unchanged.
+The **Usage → Plugins** documentation group contains Plugins, MCP, and Skills. **Usage → AstrBot Built-in AI** contains Agent Sandbox, Proactive Capabilities, Knowledge Base, and Context Compression. Their URLs remain unchanged.
 
 The Usage sidebar order is WebUI, AstrBot CLI, Built-in Commands, Plugins, AstrBot Built-in AI, Custom Rules, Agent Execution Mode, and Unified Webhook Mode.
 
 | Previous documentation entry | Current documentation entry |
 | --- | --- |
 | Usage → Plugins, MCP, Skills | Usage → Plugins → Corresponding guide |
-| Usage → Agent Sandbox, SubAgent Orchestration, Proactive Tasks, Web Search, Knowledge Base, Auto Context Compression | Usage → AstrBot Built-in AI → Corresponding guide |
-| Usage → Tool Use / Function Calling | Removed; the Web Search guide explains the required function-calling capability directly |
+| Usage → Agent Sandbox, Proactive Tasks, Knowledge Base, Auto Context Compression | Usage → AstrBot Built-in AI → Corresponding guide |
+| Usage → SubAgent Orchestration | Removed |
+| Usage → Tool Use / Function Calling | Removed |
 | Usage → Agent Runner | Usage → Agent Execution Mode (URL unchanged) |
 | Usage → CLI Commands | Usage → AstrBot CLI (URL unchanged) |
 
@@ -81,7 +83,7 @@ ChatUI supports these common workflows:
 - The sidebar initially loads the 30 most recent conversations. Scroll near the bottom to automatically load older conversations, with a progress bar while loading. Automatic requests pause after a failure; select **Retry** to continue.
   If the list does not fill the sidebar, more pages load automatically. Opening an older conversation by URL keeps its title and selected sidebar entry visible before its page loads.
 - Create, rename, and delete conversations, and switch previous conversations from the sidebar.
-- Select the config profile, model provider, and model on the chat page; if Provider session separation is enabled, you can also choose a model for the current session only.
+- Select the config profile on the chat page. The chat model comes from the Codex page (or a permission rule), so the chat page does not choose one; the former **Model Configuration** sidebar entry is removed, and model providers are managed on the **Providers** page.
 - Send text, images, files, and voice input; uploaded attachments show previews and use file signature checks to help identify file types.
 - View model thinking, tool-call status, knowledge-base or web-search references, and per-message token and latency statistics.
 - Copy or regenerate existing replies, including regenerating with another model.
@@ -95,7 +97,7 @@ ChatUI supports these common workflows:
 
 Select `Config` in the sidebar, then choose the profile to edit from the selector at the top. Sections appear in this order: `AI`, `Platforms & Messages`, `Access Control`, `Plugin`, and `Ext.`. Use the search control at the top to find a setting. The profile selector, search button, and section navigation stay fixed while only the configuration pane on the right scrolls.
 
-- In `AI`, built-in AI settings have `Model`, `Persona`, `Capabilities`, and `Advanced` tabs. Use `… → Change execution mode` beside the AI heading to connect a third-party agent.
+- `AI` shows `Codex Settings`, `Persona`, `Knowledge Base`, `Agent Computer Use` and `Proactive Agent`, followed by the `Common Settings` (voice, message handling) that do not depend on the execution mode. Codex's model, model provider, reasoning effort and prompts are set on the `Codex` page.
 - `Access Control` contains administrator IDs and the session whitelist, including whitelist logs and administrator exemptions.
 - `Platforms & Messages` contains message-trigger, session-isolation, and delivery settings.
 - `Plugin` selects the plugins enabled for this profile. To edit an individual plugin's parameters, open `Extensions` and click that plugin's gear icon (`Extension Config`).
@@ -160,7 +162,8 @@ Use the `Conversations` tab to find and manage saved conversation records:
 - By default, the list loads 30 records per page from the server. When **Group by session** is enabled, pagination switches to UMO sessions and expanding a session reveals all of its conversations. Full message history is loaded only after you select a conversation and is then shown in the preview on the right.
 - Edit titles, export multiple selected conversations, or delete multiple selected conversations.
 - Use the `{}` button in the preview header to inspect the raw `history` JSON in a read-only, word-wrapped Monaco editor.
-- Select `Back to legacy` in the upper-right corner if you still need the original table-based view.
+- Select `Back to legacy` in the upper-right corner if you still need the original table-based view. Its conversation details are view-only; history editing is removed.
+- These records are AstrBot's mirror of the conversation: Codex keeps the real context in its own thread and does not read them, so changing them would not change what the agent remembers.
 
 ### Logs
 

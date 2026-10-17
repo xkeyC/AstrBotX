@@ -54,33 +54,31 @@ AstrBot 默认配置如下：
     "provider": [],
     "provider_settings": {
         "enable": True,
-        "default_provider_id": "",
-        "default_image_caption_provider_id": "",
         "image_caption_prompt": "Please describe the image using Chinese.",
-        "provider_pool": ["*"],  # "*" 表示使用所有可用的提供者
         "wake_prefix": "",
-        "web_search": False,
-        "websearch_provider": "tavily",
-        "websearch_tavily_key": [],
-        "websearch_bocha_key": [],
-        "websearch_brave_key": [],
-        "websearch_deepseek_key": [],
-        "websearch_serpapi_key": [],
-        "web_search_link": False,
         "display_reasoning_text": False,
         "identifier": False,
         "group_name_display": False,
         "datetime_system_prompt": True,
-        "default_personality": "default",
-        "persona_pool": ["*"],
         "prompt_prefix": "{{prompt}}",
-        "max_context_length": -1,
-        "dequeue_context_length": 1,
         "streaming_response": False,
-        "show_tool_use_status": False,
-        "streaming_segmented": False,
-        "max_agent_step": 128,
-        "tool_call_timeout": 120,
+        "quoted_message_parser": {
+            "max_component_chain_depth": 4,
+            "max_forward_node_depth": 6,
+            "max_forward_fetch": 32,
+            "warn_on_action_failure": False,
+        },
+        "unsupported_streaming_strategy": "realtime_segmenting",
+        # ……以及 Computer Use、沙箱和主动型 Agent 的设置
+    },
+    "agent_runner": {
+        "runner_type": "codex",
+        "config": {
+            "persona_id": "default",
+            "safety_mode": False,
+            "proxy": "",
+            # ……其余 Codex 设置
+        },
     },
     "provider_stt_settings": {
         "enable": False,
@@ -117,13 +115,20 @@ AstrBot 默认配置如下：
     "t2i_active_template": "base",
     "http_proxy": "",
     "no_proxy": ["localhost", "127.0.0.1", "::1"],
-    "content_moderation_url": "",
-    "content_moderation_token": "",
-    "content_moderation_blocked_reply": "这条内容无法处理。",
-    "content_moderation_threshold": 0.9,
-    "content_moderation_nsfw_threshold": 0.5,
-    "content_moderation_nsfw_labels": ["low", "medium", "high"],
-    "content_moderation_categories": ["violent", "illegal", "sexual", "pii", "self-harm", "unethical", "political", "copyright", "jailbreak"],
+    "local_infra": {
+        "enable": False,
+        "base_url": "http://127.0.0.1:17890",
+        "token": "",
+        "timeout": 120,
+        "services": {
+            "stt": {"enable": True, "model": ""},
+            "tts": {"enable": True, "model": "", "reference_audio": "", "reference_text": ""},
+            "embedding": {"enable": True, "model": ""},
+            "rerank": {"enable": True, "model": ""},
+            "moderation": {"enable": True, "blocked_reply": "这条内容无法处理。", "threshold": 0.9, "nsfw_threshold": 0.5, "nsfw_labels": ["low", "medium", "high"], "categories": ["violent", "illegal", "sexual", "pii", "self-harm", "unethical", "political", "copyright", "jailbreak"]},
+            "realtime_voice": {"enable": True}
+        }
+    },
     "dashboard": {
         "enable": True,
         "username": "astrbot",
@@ -153,7 +158,6 @@ AstrBot 默认配置如下：
     "persona": [],  # deprecated
     "timezone": "Asia/Shanghai",
     "callback_api_base": "",
-    "default_kb_collection": "",  # 默认知识库名称
     "plugin_set": ["*"],  # "*" 表示使用所有可用的插件, 空列表表示不使用任何插件
 }
 ```
@@ -273,77 +277,17 @@ ID 白名单。填写后，将只处理所填写的 ID 发来的消息事件。�
 
 是否启用大语言模型聊天。默认为 `true`。
 
-#### `provider_settings.default_provider_id`
-
-默认的对话模型提供商 ID。必须是 `provider` 列表中已配置的提供商 ID。如果为空，则使用配置列表中的第一个对话模型提供商。
-
-#### `provider_settings.default_image_caption_provider_id`
-
-默认的图像描述模型提供商 ID。必须是 `provider` 列表中已配置的提供商 ID。如果为空，则代表不使用图像描述功能。
-
-此配置项的意思是，当用户发送一张图片时，AstrBot 会使用此提供商来生成对图片的描述文本，并将描述文本作为对话的上下文之一。这在对话模型不支持多模态输入时特别有用。
-
 #### `provider_settings.image_caption_prompt`
 
-图像描述的提示词模板。默认为 `"Please describe the image using Chinese."`。
-
-#### `provider_settings.provider_pool`
-
-*此配置项尚未实际使用*
+群聊上下文感知的图片转述提示词，在 WebUI 的 `群聊上下文感知` 中与 `群聊图片转述模型`（`provider_ltm_settings.image_caption_provider_id`）一起设置。默认为 `"Please describe the image using Chinese."`。
 
 #### `provider_settings.wake_prefix`
 
 使用 LLM 聊天额外的触发条件。如填写 `chat`，则需要发送消息时要以 `/chat` 才能触发 LLM 聊天。其中 `/` 是机器人的唤醒前缀。是一个防止滥用的手段。
 
-#### `provider_settings.web_search`
-
-是否启用 AstrBot 自带的网页搜索能力。默认为 `false`。启用后，LLM 可能会自动搜索网页并根据内容回答。
-
-#### `provider_settings.websearch_provider`
-
-网页搜索提供商类型。默认为 `tavily`。目前支持 `serpapi`、`deepseek`、`tavily`、`bocha`、`baidu_ai_search`、`brave`、`firecrawl`、`exa`、`anysearch`。
-
-- `serpapi`：使用 SerpApi Google Search、Google Images Light、Google Finance 和 Google Scholar。
-- `deepseek`：使用 DeepSeek Search API。
-- `tavily`：使用 Tavily 搜索引擎。
-- `bocha`：使用 BoCha 搜索引擎。
-- `baidu_ai_search`：使用百度 AI Search（MCP）。
-- `brave`：使用 Brave Search API。
-- `firecrawl`：使用 Firecrawl Search API。
-- `exa`：使用 Exa Search API。
-- `anysearch`：使用 AnySearch API。
-
-#### `provider_settings.websearch_tavily_key`
-
-Tavily 搜索引擎的 API Key 列表。使用 `tavily` 作为网页搜索提供商时需要填写。
-
-#### `provider_settings.websearch_bocha_key`
-
-BoCha 搜索引擎的 API Key 列表。使用 `bocha` 作为网页搜索提供商时需要填写。
-
-#### `provider_settings.websearch_brave_key`
-
-Brave 搜索引擎的 API Key 列表。使用 `brave` 作为网页搜索提供商时需要填写。
-
-#### `provider_settings.websearch_firecrawl_key`
-
-Firecrawl 搜索引擎的 API Key 列表。使用 `firecrawl` 作为网页搜索提供商时需要填写。
-
-#### `provider_settings.websearch_deepseek_key`
-
-DeepSeek 搜索引擎的 API Key 列表。使用 `deepseek` 作为网页搜索提供商时需要填写。可使用与对话模型相同的 API Key，配置相互独立。同账号下的多个 Key 共享 QPS 限制。
-
-#### `provider_settings.websearch_serpapi_key`
-
-SerpApi Google Search、Google Images Light、Google Finance 和 Google Scholar 共用的 API Key 列表。使用 `serpapi` 作为网页搜索提供商时需要填写。前往 [SerpApi](https://serpapi.com/manage-api-key) 获取 Key。多个 Key 轮询使用，鉴权或额度错误时会尝试下一个 Key。
-
-#### `provider_settings.web_search_link`
-
-是否在回复中提示模型附上搜索结果的链接。默认为 `false`。
-
 #### `provider_settings.display_reasoning_text`
 
-是否在回复中显示模型的推理过程。默认为 `false`。
+是否在回复前附上模型的思考内容（Codex 的推理摘要）。默认为 `false`。
 
 #### `provider_settings.identifier`
 
@@ -357,47 +301,24 @@ SerpApi Google Search、Google Images Light、Google Finance 和 Google Scholar 
 
 是否在系统提示词中加上当前机器的日期时间。默认为 `true`。
 
-#### `provider_settings.default_personality`
-
-默认使用的人格的 ID。请在 WebUI 配置人格。
-
-#### `provider_settings.persona_pool`
-
-*此配置项尚未实际使用*
-
 #### `provider_settings.prompt_prefix`
 
 用户提示词。可使用 `{{prompt}}` 作为用户输入的占位符。如果不输入占位符则代表添加在用户输入的前面。
-
-#### `provider_settings.max_context_length`
-
-当对话上下文超出这个数量时丢弃最旧的部分，一轮聊天记为 1 条。-1 为不限制。
-
-#### `provider_settings.dequeue_context_length`
-
-当触发上面提到的 `max_context_length` 限制时，每次丢弃的对话轮数。
 
 #### `provider_settings.streaming_response`
 
 是否启用流式响应。默认为 `false`。启用后，模型的回复会实时类似打字机的效果发送给用户。此配置项仅在 WebChat、Telegram、飞书平台生效。
 
-#### `provider_settings.show_tool_use_status`
+#### `provider_settings.quoted_message_parser`
 
-是否显示工具使用状态。默认为 `false`。启用后，模型在使用工具时会显示工具的名称和输入参数。
+解析引用消息和合并转发消息时的限制：`max_component_chain_depth` 为 Reply 组件链的最大递归深度，`max_forward_node_depth` 为合并转发节点的最大递归深度，`max_forward_fetch` 为递归调用 `get_forward_msg` 的最大次数，`warn_on_action_failure` 为全部拉取失败时是否输出 warning 日志。
 
-#### `provider_settings.streaming_segmented`
-
-不支持流式响应的消息平台是否降级为使用分段回复。默认为 `false`。意思是，如果启用了流式响应，但当前消息平台不支持流式响应，那么是否使用分段多次回复来代替。
-
-#### `provider_settings.max_agent_step`
-
-Agent 最大步骤数限制。默认为 `128`。模型的每次工具调用算作一步。
-
-#### `provider_settings.tool_call_timeout`
-
-Added in `v4.3.5`
-
-工具调用的最大超时时间（秒），默认为 `60` 秒。
+> [!NOTE]
+> 以下设置只对已移除的内置 Agent 执行器生效，现已删除。`provider_settings` 和顶层的旧值在加载时自动丢弃；`agent_runner.config` 下的旧值在保存配置时丢弃（运行时已忽略）：
+>
+> - `provider_settings` 下的 `default_image_caption_provider_id`（Codex 直接读取图片）、`image_compress_options`、`show_tool_use_status`、`show_tool_call_result`、`buffer_intermediate_messages`、`max_quoted_fallback_images`、`file_extract`、`provider_pool`、`persona_pool`；
+> - `agent_runner.config` 下旧的 `model` 对象（对话模型提供商、回退模型、重试次数；Codex 的 `model` 是模型名字符串）、`persona`（默认人格改为 `agent_runner.config.persona_id`，健康模式为 `agent_runner.config.safety_mode`）、`compression`（上下文压缩，由 Codex 自行管理上下文）和 `misc`（工具调用轮数、超时、工具调用模式等）；
+> - 顶层的 `default_kb_collection`（知识库请使用 `kb_names`）。
 
 #### `provider_stt_settings`
 
@@ -455,6 +376,15 @@ Added in `v4.3.5`
 - `method`: 主动回复的方法。可选值为 `possibility_reply`。
 - `possibility_reply`: 主动回复的概率。默认为 `0.1`。仅在 `method` 为 `possibility_reply` 时适用。
 - `whitelist`: 主动回复的 ID 白名单。仅在此列表中的 ID 才会触发主动回复。为空时表示不启用白名单过滤。可以使用 `/sid` 指令获取在某个平台上的会话 ID。
+
+### `agent_runner`
+
+Agent 执行器。Codex 是唯一的执行器（`runner_type` 固定为 `codex`），在 WebUI 的 `配置文件` → `AI` 中设置。常用字段：
+
+- `config.persona_id`：对话没有选定人格时使用的默认人格，默认为 `default`。会话管理中设置的人格和权限规则绑定的人格优先。
+- `config.safety_mode`：是否注入健康模式提示词，默认为 `false`。
+- `config.proxy`：Codex 的代理，支持 `socks5://`、`socks5h://`、`http://`。填写后 Codex 的所有网络请求都走它，优先于 [`http_proxy`](#http_proxy)；留空时 Codex 使用 `http_proxy` 等代理环境变量（`http_proxy` 配置项也写入这些变量），都没有时直连。
+- `config.model`、`config.model_provider`、`config.reasoning_effort`、`config.base_instructions`、`config.developer_instructions`：模型、模型提供商、推理强度和提示词，在 WebUI 的 `Codex` 页面设置。
 
 ### `content_safety`
 
@@ -516,37 +446,23 @@ AstrBot API 的地址。用于渲染 Markdown 图片。当 `t2i_strategy` 为 `r
 
 HTTP 代理。如 `http://localhost:7890`。Docker 部署时请填写 AstrBot 容器能访问到的地址，见 [Docker 部署](/deploy/astrbot/docker.md)。
 
+AstrBot 以环境变量的方式设置这个代理，Codex 也会使用它；如果填写了 Codex 代理（`agent_runner.config.proxy`），Codex 只用后者。
+
 ### `no_proxy`
 
 不使用代理的地址列表。如 `["localhost", "127.0.0.1"]`。
 
-### `content_moderation_url`
+### `local_infra`
 
-内容审核服务地址（兼容 OpenAI `POST /v1/moderations`）。留空则不审核。详见 [内容审核](/use/content-moderation)。
+本地多模态服务（[local-multimodal-infra](https://github.com/xkeyC/local-multimodal-infra)），在 WebUI `模型提供商` → `本地多模态服务` 中设置。
 
-### `content_moderation_token`
+- `enable` / `base_url` / `token` / `timeout`：是否启用、服务的 HTTP 地址（不带 `/v1`）、推理令牌（`Authorization: Bearer`）、单个请求超时秒数。
+- `services`：AstrBot 使用的各项服务，每项可单独关闭；`model` 为空时自动选用服务器上第一个已启用的对应模型。
+  - `stt` / `tts` / `embedding` / `rerank`：生成提供商 `local_infra/stt`、`local_infra/tts`、`local_infra/embedding`、`local_infra/rerank`。`tts.reference_audio` / `tts.reference_text` 为克隆的参考音频（相对数据目录）及其文本。
+  - `moderation`：[内容审核](/use/content-moderation)，`blocked_reply` 拦截提示语，`threshold` 文字阈值（`1 - 安全概率` 高于此值即违规，默认 `0.9`），`nsfw_threshold` 图片阈值（默认 `0.5`），`nsfw_labels` 算作违规的图片档位，`categories` 拦截的文字类别（为空等于全部）。
+  - `realtime_voice`：实时语音选择本地后端时连接 `ws://<地址>/v1/realtime`。
 
-内容审核服务密钥，以 `Authorization: Bearer <密钥>` 发送。留空则不带密钥。
-
-### `content_moderation_blocked_reply`
-
-用户消息被审核拦截时的回复。默认 `这条内容无法处理。`；留空时也使用它。
-
-### `content_moderation_threshold`
-
-文字审核阈值：不安全概率（`1 - 安全概率`）高于此值即判违规。默认 `0.9`，调低更严。
-
-### `content_moderation_nsfw_threshold`
-
-图片审核阈值：所选档位的 NSFW 概率之和高于此值即判违规。默认 `0.5`。
-
-### `content_moderation_nsfw_labels`
-
-算作违规的图片档位：`low`（擦边）、`medium`、`high`（露骨）。默认三档都算；为空时使用审核服务自己的设置。
-
-### `content_moderation_categories`
-
-拦截的文字类别：`violent`、`illegal`、`sexual`、`pii`、`self-harm`、`unethical`、`political`、`copyright`、`jailbreak`。默认全部；为空等于全部。
+旧版的 `content_moderation_*` 与实时语音的 `infra_url` / `infra_token` 会在启动时自动迁移到这里。
 
 ### `dashboard`
 
@@ -621,6 +537,8 @@ PyPI 镜像源地址。默认为 `https://mirrors.aliyun.com/pypi/simple/`。
 
 已配置的人格列表。每个人格包含 `id`, `name`, `description`, `system_prompt` 四个字段。
 
+该列表只保留给从 v3 升级时的数据迁移读取。
+
 ### `timezone`
 
 时区设置。请填写 IANA 时区名称, 如 Asia/Shanghai, 为空时使用系统默认时区。所有时区请查看: [IANA Time Zone Database](https://data.iana.org/time-zones/tzdb-2021a/zone1970.tab)。
@@ -629,9 +547,9 @@ PyPI 镜像源地址。默认为 `https://mirrors.aliyun.com/pypi/simple/`。
 
 AstrBot API 的基础地址。用于文件服务和插件回调等功能。如 `http://example.com:6185`。默认为空，表示不启用文件服务和插件回调功能。
 
-### `default_kb_collection`
+### `kb_tavily_key`
 
-默认知识库名称。用于 RAG 功能。如果为空，则不使用知识库。
+知识库「从 URL 导入」使用的 Tavily API Key 列表（Tavily Extract 提取网页正文），只读取默认配置文件中的值。联网搜索由 Codex 自己完成（Codex 设置中的「启用 Codex 联网搜索」），不需要这个 Key。
 
 ### `plugin_set`
 
