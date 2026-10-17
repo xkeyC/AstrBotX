@@ -7,6 +7,8 @@
     "addProvider": "Add Provider",
     "deleteProvider": "Delete provider",
     "selectHint": "Please select a provider",
+    "managedBadge": "Local multimodal service · read-only",
+    "managedByLocalInfra": "Registered by the local multimodal service, model {model}. Change it on the Local multimodal service tab; here it can only be tested.",
     "providerType": "Provider Type",
     "tabs": {
       "all": "All",

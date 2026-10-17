@@ -81,6 +81,7 @@ export type OpenConfig = DynamicConfig;
 export interface ProviderSchemaData {
   config_schema?: OpenConfig;
   providers?: OpenConfig[];
+  managed_providers?: OpenConfig[];
   provider_sources?: OpenConfig[];
   model_metadata?: Record<string, unknown>;
 }

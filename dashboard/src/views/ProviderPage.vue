@@ -189,6 +189,7 @@
                     {{ tm('availability.test') }}
                   </v-btn>
                   <v-btn
+                    v-if="!selectedLegacyProvider.managed_by"
                     color="primary"
                     prepend-icon="mdi-content-save-outline"
                     :loading="loading"
@@ -209,7 +210,16 @@
                   <div class="provider-section-head">
                     <div class="provider-section-title">{{ tm('providers.settings') }}</div>
                   </div>
+                  <v-alert
+                    v-if="selectedLegacyProvider.managed_by"
+                    type="info"
+                    variant="tonal"
+                    density="compact"
+                  >
+                    {{ tm('providers.managedByLocalInfra', { model: selectedLegacyProvider.model || '-' }) }}
+                  </v-alert>
                   <AstrBotConfig
+                    v-else
                     :iterable="newSelectedProviderConfig"
                     :metadata="configSchema"
                     metadataKey="provider"
@@ -353,6 +363,7 @@ const {
   displayedProviderSources,
   filteredMergedModelEntries,
   filteredProviders,
+  managedProviders,
   basicSourceConfig,
   advancedSourceConfig,
   manualProviderId,
@@ -395,6 +406,9 @@ let suppressLegacyProviderWatch = false
 
 const displayedLegacyProviders = computed(() => [
   ...filteredProviders.value,
+  ...managedProviders.value.filter(
+    (provider) => provider.provider_type === selectedProviderType.value
+  ),
   ...legacyProviderDrafts.value.filter(
     (provider) => provider.provider_type === selectedProviderType.value
   )
@@ -450,7 +464,9 @@ watch(() => props.defaultTab, (val) => {
   updateDefaultTab(val)
 })
 
-watch(selectedProviderType, () => {
+watch(selectedProviderType, (_, previous) => {
+  // Saving the local service re-registers its providers.
+  if (previous === 'local_infra') void loadConfig()
   selectedLegacyProvider.value = null
   newProviderOriginalId.value = ''
   updatingMode.value = false

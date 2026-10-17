@@ -1537,6 +1537,11 @@ class ProviderConfigService:
         return {
             "config_schema": config_schema,
             "providers": providers,
+            # Registered from the local_infra setting, shown read-only.
+            "managed_providers": [
+                copy.deepcopy(config)
+                for config in self.provider_manager.local_infra_configs.values()
+            ],
             "provider_sources": self.config.get("provider_sources", []),
             "model_metadata": model_metadata,
         }

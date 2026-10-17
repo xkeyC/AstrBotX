@@ -93,7 +93,8 @@
         :class="[
           'provider-source-item',
           {
-            'provider-source-item--active': isActive(source)
+            'provider-source-item--active': isActive(source),
+            'provider-source-item--managed': source.managed_by
           }
         ]"
         @click="emitSelectSource(source)"
@@ -114,13 +115,13 @@
             {{ getSourceDisplayName(source) }}
           </div>
           <div class="provider-source-item__subtitle">
-            {{ source.api_base || sourceBadge(source) }}
+            {{ source.managed_by ? tm('providers.managedBadge') : source.api_base || sourceBadge(source) }}
           </div>
         </div>
 
         <div class="provider-source-item__actions">
           <v-btn
-            v-if="!source.isPlaceholder"
+            v-if="!source.isPlaceholder && !source.managed_by"
             icon="mdi-delete-outline"
             variant="text"
             size="small"
@@ -204,7 +205,11 @@ const emit = defineEmits([
 
 const selectedId = computed(() => props.selectedProviderSource?.id || null)
 const canDeleteSelectedSource = computed(() =>
-  Boolean(props.selectedProviderSource && !props.selectedProviderSource.isPlaceholder)
+  Boolean(
+    props.selectedProviderSource &&
+      !props.selectedProviderSource.isPlaceholder &&
+      !props.selectedProviderSource.managed_by
+  )
 )
 
 const isActive = (source) => {
@@ -221,7 +226,9 @@ const sourceValue = (source) => (
 const sourceOptions = computed(() =>
   props.displayedProviderSources.map((source) => ({
     title: props.getSourceDisplayName(source),
-    subtitle: source.api_base || sourceBadge(source),
+    subtitle: source.managed_by
+      ? props.tm('providers.managedBadge')
+      : source.api_base || sourceBadge(source),
     value: sourceValue(source),
     source
   }))
@@ -351,6 +358,10 @@ const selectSourceByValue = (value) => {
 .provider-source-item:hover,
 .provider-source-item--active {
   background: rgba(var(--v-theme-on-surface), 0.05);
+}
+
+.provider-source-item--managed {
+  opacity: 0.6;
 }
 
 .provider-source-avatar {

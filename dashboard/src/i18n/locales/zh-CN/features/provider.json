@@ -7,6 +7,8 @@
     "addProvider": "新增模型提供商",
     "deleteProvider": "删除模型提供商",
     "selectHint": "请选择一个模型提供商",
+    "managedBadge": "本地多模态服务 · 只读",
+    "managedByLocalInfra": "由本地多模态服务注册，当前模型：{model}。在「本地多模态服务」页修改；这里只能测试。",
     "providerType": "提供商类型",
     "tabs": {
       "all": "全部",

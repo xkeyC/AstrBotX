@@ -194,6 +194,7 @@ class FakeProviderManager:
         self.reloaded_providers: list[dict] = []
         self.deleted_provider_filters: list[dict] = []
         self.inst_map: dict[str, object] = {}
+        self.local_infra_configs: dict[str, dict] = {}
         self.provider_insts: list[object] = []
         self.stt_provider_insts: list[object] = []
         self.tts_provider_insts: list[object] = []
@@ -2101,6 +2102,34 @@ async def test_v1_provider_schema_keeps_reasoning_in_model_metadata(
     provider = next(item for item in data["providers"] if item["id"] == "gpt-mini")
     assert "reasoning" not in provider
     assert data["model_metadata"]["gpt-4o-mini"] == model_metadata
+
+
+@pytest.mark.asyncio
+async def test_v1_provider_schema_lists_local_infra_providers_apart(
+    asgi_client: httpx.AsyncClient,
+    fake_core_lifecycle,
+):
+    managed = {
+        "id": "local_infra/tts",
+        "type": "local_infra_tts",
+        "provider_type": "text_to_speech",
+        "enable": True,
+        "model": "indextts-1.5-onnx",
+        "managed_by": "local_infra",
+    }
+    fake_core_lifecycle.provider_manager.local_infra_configs = {
+        "local_infra/tts": managed
+    }
+
+    response = await asgi_client.get(
+        "/api/v1/providers/schema",
+        headers=_jwt_headers(),
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["managed_providers"] == [managed]
+    assert all(item["id"] != "local_infra/tts" for item in data["providers"])
 
 
 @pytest.mark.asyncio

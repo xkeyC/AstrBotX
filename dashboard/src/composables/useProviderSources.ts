@@ -67,6 +67,7 @@ export function useProviderSources(options: UseProviderSourcesOptions) {
   const metadata = ref<Record<string, any>>({})
   const providerSources = ref<any[]>([])
   const providers = ref<any[]>([])
+  const managedProviders = ref<any[]>([])
   const selectedProviderType = ref<string>(resolveDefaultTab(options.defaultTab))
   const selectedProviderSource = ref<any | null>(null)
   const selectedProviderSourceOriginalId = ref<string | null>(null)
@@ -801,6 +802,7 @@ export function useProviderSources(options: UseProviderSourcesOptions) {
         providerSources.value = response.data.data.provider_sources || []
         modelMetadata.value = (response.data.data.model_metadata || {}) as Record<string, any>
         providers.value = response.data.data.providers || []
+        managedProviders.value = response.data.data.managed_providers || []
       }
     } catch (error) {
       console.error('Failed to load provider template:', error)
@@ -824,6 +826,7 @@ export function useProviderSources(options: UseProviderSourcesOptions) {
     metadata,
     providerSources,
     providers,
+    managedProviders,
     selectedProviderType,
     selectedProviderSource,
     selectedProviderSourceOriginalId,
