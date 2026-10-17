@@ -278,7 +278,7 @@
     "modelState": "状态",
     "usedBy": "AstrBot 使用",
     "modelDisabled": "未启用",
-    "modelMissing": "文件缺失",
+    "modelNotDownloaded": "未下载",
     "modelReady": "可用",
     "loadFailed": "读取本地多模态服务设置失败",
     "saved": "已保存",

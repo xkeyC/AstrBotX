@@ -530,7 +530,8 @@ function statusOf(name: ServiceName) {
 
 function modelState(model: InfraModel) {
   if (!model.enabled) return { color: 'grey', text: tm('localInfra.modelDisabled') }
-  if (model.downloaded === false) return { color: 'warning', text: tm('localInfra.modelMissing') }
+  // Another variant may serve the task; a service pinned to it shows the error.
+  if (model.downloaded === false) return { color: 'grey', text: tm('localInfra.modelNotDownloaded') }
   return { color: 'success', text: tm('localInfra.modelReady') }
 }
 

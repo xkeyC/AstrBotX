@@ -278,7 +278,7 @@
     "modelState": "State",
     "usedBy": "Used by AstrBot",
     "modelDisabled": "Disabled",
-    "modelMissing": "Files missing",
+    "modelNotDownloaded": "Not downloaded",
     "modelReady": "Ready",
     "loadFailed": "Cannot load the local multimodal service settings",
     "saved": "Saved",
