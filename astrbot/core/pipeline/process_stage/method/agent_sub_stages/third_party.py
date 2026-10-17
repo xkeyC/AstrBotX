@@ -356,7 +356,14 @@ class ThirdPartyAgentSubStage(Stage):
     ) -> AsyncGenerator[None, None]:
         req: ProviderRequest | None = None
 
-        if not _matches_provider_wake_prefix(
+        # A request a plugin handler yielded (event.request_llm, e.g. the group
+        # chat context's active reply) is what to answer, as with the local
+        # agent: the wake prefix does not apply to it, and its prompt and
+        # attachments stand in for the message's.
+        plugin_req = event.get_extra("provider_request")
+        if not isinstance(plugin_req, ProviderRequest):
+            plugin_req = None
+        if plugin_req is None and not _matches_provider_wake_prefix(
             event,
             provider_wake_prefix,
         ):
@@ -365,13 +372,30 @@ class ThirdPartyAgentSubStage(Stage):
         # make provider request
         req = ProviderRequest()
         req.session_id = event.unified_msg_origin
-        req.prompt = event.message_str
-        prefix_text = event.message_str
-        if event.get_platform_name() == "lark":
-            prefix_text = prefix_text.lstrip()
-        if provider_wake_prefix and prefix_text.startswith(provider_wake_prefix):
-            req.prompt = prefix_text[len(provider_wake_prefix) :]
-        for comp in event.message_obj.message:
+        if plugin_req is not None:
+            # Answered once: a later pass of this event (a steered request
+            # leaves no result) must not send it again.
+            event.set_extra("provider_request", None)
+            req.prompt = plugin_req.prompt or ""
+            # The plugin's instructions are for this request only; as the
+            # request's system prompt they would stay in the Codex thread.
+            req.add_temporary_context(
+                "plugin_instructions", plugin_req.system_prompt or ""
+            )
+            req.func_tool = plugin_req.func_tool
+            req.image_urls = list(plugin_req.image_urls or [])
+            req.audio_urls = list(plugin_req.audio_urls or [])
+            req.extra_user_content_parts = list(plugin_req.extra_user_content_parts)
+            # The Codex thread is the conversation history; the request's
+            # contexts (the mirrored history) are not sent again.
+        else:
+            req.prompt = event.message_str
+            prefix_text = event.message_str
+            if event.get_platform_name() == "lark":
+                prefix_text = prefix_text.lstrip()
+            if provider_wake_prefix and prefix_text.startswith(provider_wake_prefix):
+                req.prompt = prefix_text[len(provider_wake_prefix) :]
+        for comp in [] if plugin_req is not None else event.message_obj.message:
             if isinstance(comp, Image):
                 try:
                     image_path = await comp.convert_to_base64()
@@ -422,6 +446,7 @@ class ThirdPartyAgentSubStage(Stage):
                 self.ctx.plugin_manager.context,
                 self.conf,
                 self.runner_config,
+                collect_media=plugin_req is None,
             )
         except BaseException:
             await refund_rate_limit(event)

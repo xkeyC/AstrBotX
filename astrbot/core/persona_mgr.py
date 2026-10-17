@@ -42,7 +42,7 @@ class PersonaManager:
                 "persona_id", SYSTEM_DEFAULT_PERSONA_ID
             )
             if default_runner.get("runner_type") == "local"
-            else default_runner_config.get("persona_id", SYSTEM_DEFAULT_PERSONA_ID)
+            else default_runner_config.get("persona_id") or SYSTEM_DEFAULT_PERSONA_ID
         )
         self.personas: list[Persona] = []
         self.selected_default_persona: Persona | None = None
@@ -117,7 +117,7 @@ class PersonaManager:
                 "persona_id", SYSTEM_DEFAULT_PERSONA_ID
             )
             if agent_runner.get("runner_type") == "local"
-            else runner_config.get("persona_id", SYSTEM_DEFAULT_PERSONA_ID)
+            else runner_config.get("persona_id") or SYSTEM_DEFAULT_PERSONA_ID
         )
         return self.get_persona_v3_by_id(default_persona_id) or DEFAULT_PERSONALITY
 
@@ -165,7 +165,9 @@ class PersonaManager:
                         "persona_id", SYSTEM_DEFAULT_PERSONA_ID
                     )
                     if agent_runner.get("runner_type") == "local"
-                    else runner_config.get("persona_id", SYSTEM_DEFAULT_PERSONA_ID)
+                    # An empty choice (the picker confirmed with nothing
+                    # selected) is the default persona, as in the migration.
+                    else runner_config.get("persona_id") or SYSTEM_DEFAULT_PERSONA_ID
                 )
 
         persona = next(

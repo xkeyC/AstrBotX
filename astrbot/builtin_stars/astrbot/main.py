@@ -228,12 +228,7 @@ class Main(star.Star):
                         logger.error(e)
 
             if need_active:
-                provider = await self.context.get_using_provider_async(
-                    event.unified_msg_origin
-                )
-                if not provider:
-                    logger.error("未找到任何 LLM 提供商。请先配置。无法主动回复")
-                    return
+                # The agent (Codex) answers; no chat provider is needed.
                 try:
                     session_curr_cid = await self.context.conversation_manager.get_curr_conversation_id(
                         event.unified_msg_origin,

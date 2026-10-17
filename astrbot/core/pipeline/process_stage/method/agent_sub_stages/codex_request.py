@@ -21,6 +21,7 @@ from astrbot.core.astr_main_agent import (
     _apply_llm_safety_mode,
     _apply_local_env_tools,
     _apply_sandbox_tools,
+    _build_local_mode_prompt,
     _decorate_llm_request,
     _filter_tools_by_persona_scope,
     _get_quoted_message_parser_settings,
@@ -40,6 +41,7 @@ from astrbot.core.tools.message_tools import (
     GetGroupMessageHistoryTool,
     SendMessageToUserTool,
 )
+from astrbot.core.utils.media_utils import MediaResolver
 
 
 def _build_config(
@@ -47,18 +49,18 @@ def _build_config(
 ) -> MainAgentBuildConfig:
     original = astrbot_config.get("provider_settings", {})
     settings = dict(original)
-    # Codex reads images natively; do not caption them with another provider.
+    # Codex reads images natively: a removed caption setting a stale page
+    # saved back must not caption them away.
     settings["default_image_caption_provider_id"] = ""
-    # Shipyard mode keeps every agent file operation inside the sandbox: Codex
-    # is only the orchestrator, and even skills are read from the sandbox copy.
-    shipyard_mode = bool(runner_config.get("shipyard_mode"))
-    runtime = (
-        "sandbox" if shipyard_mode else original.get("computer_use_runtime", "none")
-    )
-    # Skills are read from this host through astrbot_read_skill (not a shell),
-    # unless shipyard mode moves that into the sandbox as well.
-    settings["_codex_skills"] = "sandbox" if shipyard_mode else True
-    settings["computer_use_runtime"] = "sandbox" if shipyard_mode else "local"
+    # The execution environment is the one switch: with the sandbox runtime
+    # every agent file operation stays inside the sandbox -- Codex is only the
+    # orchestrator, and even skills are read from the sandbox copy.
+    runtime = str(original.get("computer_use_runtime") or "none")
+    in_sandbox = runtime == "sandbox"
+    # Skills are read through astrbot_read_skill (not a shell): from the
+    # sandbox copy with the sandbox runtime, from this host otherwise.
+    settings["_codex_skills"] = "sandbox" if in_sandbox else True
+    settings["computer_use_runtime"] = "sandbox" if in_sandbox else "local"
     proactive_cfg = settings.get("proactive_capability", {}) or {}
     return MainAgentBuildConfig(
         tool_call_timeout=int(runner_config.get("tool_call_timeout") or 120),
@@ -67,9 +69,8 @@ def _build_config(
         llm_safety_mode=bool(runner_config.get("safety_mode", False)),
         add_cron_tools=proactive_cfg.get("add_cron_tools", True),
         timezone=plugin_context.get_config().get("timezone"),
-        max_quoted_fallback_images=settings.get("max_quoted_fallback_images", 20),
         # Execution environment as configured by the user (sandbox / local /
-        # none), or the sandbox alone in shipyard mode.
+        # none).
         computer_use_runtime=runtime,
         sandbox_cfg=original.get("sandbox", {}) or {},
     )
@@ -118,14 +119,52 @@ async def prepare_codex_request(
     plugin_context: Context,
     astrbot_config: dict,
     runner_config: dict,
+    *,
+    collect_media: bool = True,
 ) -> None:
+    """Complete a request for the Codex runner.
+
+    Args:
+        event: Event the request answers.
+        req: Request holding the prompt; completed in place.
+        plugin_context: Services used to resolve conversation, persona and tools.
+        astrbot_config: The event's AstrBot configuration.
+        runner_config: The Codex runner configuration.
+        collect_media: Whether the attachments come from the event's message.
+            False for a request a plugin yielded, which brings its own.
+    """
     config = _build_config(astrbot_config, runner_config, plugin_context)
     policy = policy_for_event(event, astrbot_config.get(PERMISSION_RULES_KEY) or [])
     if policy.persona_id and not event.get_selected_persona():
         event.set_selected_persona(policy.persona_id)
     if policy.model and not req.model:
         req.model = policy.model
-    await _collect_media(event, req)
+    if collect_media:
+        await _collect_media(event, req)
+    else:
+        # Codex takes URLs, data URIs and local paths, not base64:// refs.
+        image_urls = []
+        for ref in req.image_urls:
+            if ref.startswith("base64://"):
+                try:
+                    ref = await MediaResolver(ref, media_type="image").to_path()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Codex: failed to resolve a plugin image: %s", e)
+                    continue
+                event.track_temporary_local_file(ref)
+            image_urls.append(ref)
+        req.image_urls = image_urls
+        audio_urls = []
+        for ref in req.audio_urls:
+            if ref.startswith("base64://"):
+                try:
+                    ref = await MediaResolver(ref, media_type="audio").to_path()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Codex: failed to resolve a plugin audio: %s", e)
+                    continue
+                event.track_temporary_local_file(ref)
+            audio_urls.append(ref)
+        req.audio_urls = audio_urls
 
     req.conversation = await _get_session_conv(event, plugin_context)
     await _decorate_llm_request(event, req, plugin_context, config, provider=None)
@@ -168,6 +207,10 @@ async def prepare_codex_request(
         req.func_tool.remove_tool("astrbot_shell_session")
         req.func_tool.add_tool(ExecCommandTool())
         req.func_tool.add_tool(WriteStdinTool())
+        if config.computer_use_runtime == "local":
+            req.set_context_anchor(
+                "local_runtime", _build_local_mode_prompt(codex_tools=True)
+            )
         # A persona that lists the shell or edit tools keeps them under their
         # Codex names, so its tool list means the same with either runner.
         allowed = event.get_extra(PERSONA_ALLOWED_TOOLS_EXTRA_KEY)
@@ -196,7 +239,8 @@ async def prepare_codex_request(
 
     _filter_tools_by_persona_scope(event, req)
     # One reader for every runtime: it opens the host copy, or the sandbox copy
-    # in shipyard mode, so the model never has to locate skill files itself.
+    # with the sandbox runtime, so the model never has to locate skill files
+    # itself.
     # Added after the persona's tool list is applied: the persona's skill list
     # already decides which skills this request carries.
     if event.get_extra("_codex_skills"):

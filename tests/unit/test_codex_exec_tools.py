@@ -1,4 +1,6 @@
 import asyncio
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -28,9 +30,104 @@ def _context(monkeypatch, booter, *, local: bool, role: str = "admin"):
         return booter
 
     monkeypatch.setattr(codex_exec, "get_booter", fake_get_booter)
-    monkeypatch.setattr(codex_exec, "check_admin_permission", lambda *_: None)
+    monkeypatch.setattr(
+        codex_exec, "check_local_execution_permission", lambda *_: (None, None)
+    )
     monkeypatch.setattr(codex_exec, "is_local_runtime", lambda _: local)
+
+    async def fake_workspace_root(_context):
+        return Path(tempfile.gettempdir())
+
+    monkeypatch.setattr(codex_exec, "workspace_root_for_context", fake_workspace_root)
     return ctx
+
+
+def _policy_context(role: str, policy: dict, admins: list[str]):
+    """A Local-runtime tool context whose role policy is ``policy``."""
+    config = {
+        "admins_id": admins,
+        "provider_settings": {
+            "computer_use_runtime": "local",
+            "computer_use_local_permissions": {role: policy},
+        },
+    }
+    event = SimpleNamespace(
+        unified_msg_origin="qq:GroupMessage:g",
+        get_sender_id=lambda: "1",
+        get_group_id=lambda: "g",
+        role=role,
+    )
+    return SimpleNamespace(
+        context=SimpleNamespace(
+            event=event, context=SimpleNamespace(get_config=lambda umo: config)
+        )
+    )
+
+
+class RecordingShell(codex_exec.LocalShellComponent):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    async def exec_managed(self, command, **kwargs):
+        self.calls.append(kwargs)
+        return {"session_id": "s-1", "stdout": "ok", "exit_code": 0}
+
+
+def _patch_local(monkeypatch, shell, tmp_path):
+    from astrbot.core.tools.computer_tools import util
+
+    # Isolation is available (Linux bubblewrap), whatever the test host has.
+    monkeypatch.setattr(
+        util, "get_process_sandbox_status", lambda: {"status": "detected"}
+    )
+
+    async def fake_get_booter(_context, _umo):
+        return SimpleNamespace(shell=shell)
+
+    async def fake_workspace_root(_context):
+        return tmp_path
+
+    monkeypatch.setattr(codex_exec, "get_booter", fake_get_booter)
+    monkeypatch.setattr(codex_exec, "workspace_root_for_context", fake_workspace_root)
+
+
+def test_local_exec_follows_the_roles_local_policy(monkeypatch, tmp_path):
+    shell = RecordingShell()
+    _patch_local(monkeypatch, shell, tmp_path)
+
+    # A member whose role may not execute is refused before anything starts.
+    ctx = _policy_context(
+        "member",
+        {
+            "allow_execution": False,
+            "allow_network": False,
+            "filesystem_scope": "workspace",
+        },
+        admins=[],
+    )
+    out = asyncio.run(ExecCommandTool().call(ctx, "ls"))
+    assert "Permission denied" in out and not shell.calls
+    out = asyncio.run(WriteStdinTool().call(ctx, "s-1", chars="y"))
+    assert "Permission denied" in out
+
+    # An admin with host access runs unisolated, with the policy's network,
+    # and the run stays allowed while the policy and admin status hold.
+    ctx = _policy_context(
+        "admin",
+        {"allow_execution": True, "allow_network": True, "filesystem_scope": "host"},
+        admins=["1"],
+    )
+    out = asyncio.run(ExecCommandTool().call(ctx, "ls"))
+    assert "Process exited with code 0" in out
+    call = shell.calls[-1]
+    assert call["sandboxed"] is False
+    assert call["allow_network"] is True
+    assert call["filesystem_scope"] == "host"
+    assert call["cwd"] == str(tmp_path)
+    assert call["permission_check"]() is True
+    ctx.context.context.get_config(umo="")["admins_id"] = []
+    assert call["permission_check"]() is False
 
 
 def test_response_format_matches_codex_shape():
@@ -194,7 +291,9 @@ def test_poll_script_probes_a_tmux_pane_that_died_without_an_exit_code():
     )
 
 
-def test_shipyard_mode_forces_sandbox_and_disables_native_exec(tmp_path):
+def test_the_sandbox_runtime_keeps_skills_in_the_sandbox_and_native_exec_off(
+    tmp_path,
+):
     from astrbot.core.agent.runners.codex.codex_agent_runner import engine_options
     from astrbot.core.agent.runners.codex.skills import build_codex_skills_prompt
     from astrbot.core.pipeline.process_stage.method.agent_sub_stages.codex_request import (
@@ -203,21 +302,29 @@ def test_shipyard_mode_forces_sandbox_and_disables_native_exec(tmp_path):
     from astrbot.core.skills.skill_manager import SkillInfo
 
     plugin_context = SimpleNamespace(get_config=lambda: {"timezone": "UTC"})
-    astrbot_config = {"provider_settings": {"computer_use_runtime": "none"}}
-    config = _build_config(astrbot_config, {"shipyard_mode": True}, plugin_context)
+    sandbox_config = {"provider_settings": {"computer_use_runtime": "sandbox"}}
+    config = _build_config(sandbox_config, {}, plugin_context)
     assert config.computer_use_runtime == "sandbox"
     assert config.provider_settings["_codex_skills"] == "sandbox"
+    assert config.provider_settings["computer_use_runtime"] == "sandbox"
 
-    plain = _build_config(astrbot_config, {}, plugin_context)
-    assert plain.computer_use_runtime == "none"
-    assert plain.provider_settings["_codex_skills"] is True
+    for runtime in ("none", "local"):
+        plain = _build_config(
+            {"provider_settings": {"computer_use_runtime": runtime}},
+            # A leftover shipyard_mode key no longer means anything: the
+            # runtime is the one switch.
+            {"shipyard_mode": True},
+            plugin_context,
+        )
+        assert plain.computer_use_runtime == runtime
+        assert plain.provider_settings["_codex_skills"] is True
+        assert plain.provider_settings["computer_use_runtime"] == "local"
 
     opts = engine_options(
         {
             "codex_home": str(tmp_path),
             "tool_mode": "direct",
             "native_exec_tools": True,
-            "shipyard_mode": True,
         }
     )
     assert opts["config"]["features.shell_tool"] is False
@@ -326,3 +433,51 @@ def test_pty_control_sequences_are_stripped_for_the_model():
     )
     assert text.endswith("Output:\ndone\n")
     assert "\x1b" not in text and "\r" not in text
+
+
+@pytest.mark.parametrize("workdir", ["/", "..", "../outside", str(Path.home())])
+def test_a_workspace_scoped_run_cannot_leave_the_workspace(
+    monkeypatch, tmp_path, workdir
+):
+    shell = RecordingShell()
+    _patch_local(monkeypatch, shell, tmp_path / "ws")
+    (tmp_path / "ws").mkdir()
+    ctx = _policy_context(
+        "member",
+        {
+            "allow_execution": True,
+            "allow_network": False,
+            "filesystem_scope": "workspace",
+        },
+        admins=[],
+    )
+    out = asyncio.run(ExecCommandTool().call(ctx, "ls", workdir=workdir))
+    assert out.startswith("Error: workdir must be inside the workspace")
+    assert not shell.calls
+
+
+def test_a_relative_workdir_is_in_the_workspace(monkeypatch, tmp_path):
+    shell = RecordingShell()
+    ws = tmp_path / "ws"
+    (ws / "src").mkdir(parents=True)
+    _patch_local(monkeypatch, shell, ws)
+    ctx = _policy_context(
+        "member",
+        {
+            "allow_execution": True,
+            "allow_network": False,
+            "filesystem_scope": "workspace",
+        },
+        admins=[],
+    )
+    asyncio.run(ExecCommandTool().call(ctx, "ls", workdir="src"))
+    assert shell.calls[-1]["cwd"] == str((ws / "src").resolve())
+
+    # Host access may run anywhere.
+    ctx = _policy_context(
+        "admin",
+        {"allow_execution": True, "allow_network": True, "filesystem_scope": "host"},
+        admins=["1"],
+    )
+    asyncio.run(ExecCommandTool().call(ctx, "ls", workdir=str(tmp_path)))
+    assert shell.calls[-1]["cwd"] == str(tmp_path.resolve())

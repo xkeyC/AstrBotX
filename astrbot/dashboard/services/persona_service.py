@@ -128,6 +128,34 @@ class PersonaService:
         await self.persona_mgr.update_persona(**update_kwargs)
         return {"message": "人格更新成功"}
 
+    async def clone_persona(self, data: object) -> dict:
+        """Copies a persona under a new id (WebUI persona cloning).
+
+        Args:
+            data: ``source_persona_id`` and ``new_persona_id``.
+
+        Returns:
+            A message and the new persona.
+
+        Raises:
+            PersonaServiceError: A parameter is missing.
+        """
+        payload = self._payload(data)
+        source_persona_id = str(payload.get("source_persona_id") or "").strip()
+        new_persona_id = str(payload.get("new_persona_id") or "").strip()
+        if not source_persona_id:
+            raise PersonaServiceError("缺少必要参数: source_persona_id")
+        if not new_persona_id:
+            raise PersonaServiceError("新人格ID不能为空")
+        persona = await self.persona_mgr.clone_persona(
+            source_persona_id=source_persona_id,
+            new_persona_id=new_persona_id,
+        )
+        return {
+            "message": "人格克隆成功",
+            "persona": self.serialize_persona(persona, empty_lists_for_tools=True),
+        }
+
     async def delete_persona(self, data: object) -> dict:
         payload = self._payload(data)
         persona_id = payload.get("persona_id")

@@ -254,6 +254,16 @@ async def update_dashboard_persona(
     return await _run(lambda: service.update_persona(body))
 
 
+@legacy_router.post("/clone")
+async def clone_dashboard_persona(
+    request: Request,
+    _username: str = Depends(require_dashboard_user),
+    service: PersonaService = Depends(get_service),
+):
+    body = await _json_or_empty(request)
+    return await _run(lambda: service.clone_persona(body))
+
+
 @legacy_router.post("/delete")
 async def delete_dashboard_persona(
     request: Request,

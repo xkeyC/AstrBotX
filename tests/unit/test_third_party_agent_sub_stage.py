@@ -649,3 +649,93 @@ async def test_a_message_stopped_while_prepared_is_not_steered_in(monkeypatch):
     release.assert_awaited_once_with(event)
     refund.assert_awaited_once_with(event)
     runner.reset.assert_not_awaited()
+
+
+async def _prepared_request(monkeypatch, wake_prefix: str, extras: dict):
+    """Runs the Codex stage up to the request hook; the prepare call or None."""
+    prepare = AsyncMock()
+    monkeypatch.setattr(third_party, "prepare_codex_request", prepare)
+    monkeypatch.setattr(third_party, "check_rate_limit", AsyncMock(return_value=None))
+    monkeypatch.setattr(third_party, "refund_rate_limit", AsyncMock())
+    monkeypatch.setattr(third_party, "release_group_history", AsyncMock())
+    # Stops right after preparing: only the request matters here.
+    monkeypatch.setattr(third_party, "call_event_hook", AsyncMock(return_value=True))
+    config = {
+        "agent_runner": {"runner_type": "codex", "config": {}},
+        "provider_settings": _provider_settings(),
+    }
+    stage = third_party.ThirdPartyAgentSubStage()
+    await stage.initialize(_stage_ctx(config))
+    stage._resolve_persona_custom_error_message = AsyncMock(return_value=None)
+    event = MagicMock()
+    event.message_str = "the weather is nice today"
+    event.unified_msg_origin = "aiocqhttp:GroupMessage:456"
+    event.get_platform_name.return_value = "aiocqhttp"
+    event.message_obj.message = []
+    event.get_extra.side_effect = lambda key, default=None: extras.get(key, default)
+    event.set_extra.side_effect = extras.__setitem__
+
+    [item async for item in stage.process(event, wake_prefix)]
+    return prepare.await_args
+
+
+@pytest.mark.asyncio
+async def test_an_active_reply_runs_despite_the_llm_wake_prefix(monkeypatch):
+    """群聊上下文感知的主动回复：设置了 LLM 唤醒前缀时也要触发（旧 bug：被前缀拦下）。"""
+    from astrbot.core.provider.entities import ProviderRequest
+
+    active_reply = ProviderRequest(
+        prompt="the weather is nice today",
+        image_urls=["/tmp/cat.png"],
+        system_prompt="Chime in briefly.",
+    )
+
+    call = await _prepared_request(
+        monkeypatch, "ai", {"provider_request": active_reply}
+    )
+
+    assert call is not None, "the active reply never reached Codex"
+    req = call.args[1]
+    assert req.prompt == "the weather is nice today"
+    assert req.image_urls == ["/tmp/cat.png"]
+    # The plugin's instructions go with this request only: as the request's
+    # system prompt they would stay in the Codex thread for later messages.
+    assert req.system_prompt == ""
+    [note] = [part.text for part in req.dynamic_user_context_parts]
+    assert note.startswith('<request_context name="plugin_instructions">')
+    assert "Chime in briefly." in note
+    assert req.session_id == "aiocqhttp:GroupMessage:456"
+    # Its own attachments, not the message's.
+    assert call.kwargs["collect_media"] is False
+    # The plugin's request object is not changed.
+    assert active_reply.session_id == ""
+
+
+@pytest.mark.asyncio
+async def test_a_plain_message_without_the_wake_prefix_still_does_not_run(
+    monkeypatch,
+):
+    assert await _prepared_request(monkeypatch, "ai", {}) is None
+
+
+@pytest.mark.asyncio
+async def test_a_plugin_request_replaces_the_message_prompt(monkeypatch):
+    from astrbot.core.provider.entities import ProviderRequest
+
+    call = await _prepared_request(
+        monkeypatch, "", {"provider_request": ProviderRequest(prompt="summarize")}
+    )
+
+    assert call.args[1].prompt == "summarize"
+    assert call.kwargs["collect_media"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_plugin_request_is_answered_once(monkeypatch):
+    # A steered request leaves no result, and the process stage runs the
+    # agent again for the event: the plugin's request must not go twice.
+    from astrbot.core.provider.entities import ProviderRequest
+
+    extras = {"provider_request": ProviderRequest(prompt="summarize")}
+    assert await _prepared_request(monkeypatch, "", extras) is not None
+    assert extras["provider_request"] is None

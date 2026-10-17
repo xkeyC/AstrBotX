@@ -15,12 +15,8 @@ from astrbot.core.platform.message_type import MessageType
 def make_main_with_conversation_manager(conv_mgr):
     main = Main.__new__(Main)
     main.context = MagicMock()
-    main.context.get_using_provider_async = AsyncMock(
-        side_effect=lambda *args, **kwargs: main.context.get_using_provider(
-            *args,
-            **kwargs,
-        )
-    )
+    # No chat provider: the active reply is answered by the agent (Codex).
+    main.context.get_using_provider_async = AsyncMock(return_value=None)
     main.context.conversation_manager = conv_mgr
     return main
 
@@ -69,7 +65,6 @@ async def test_active_reply_does_not_create_conversation_when_current_missing():
             "active_reply": {"enable": True},
         },
     }
-    main.context.get_using_provider.return_value = object()
     main.group_chat_context = SimpleNamespace(
         need_active_reply=AsyncMock(return_value=True),
         handle_message=AsyncMock(),
@@ -100,7 +95,6 @@ async def test_active_reply_reuses_current_umo_conversation():
             "active_reply": {"enable": True},
         },
     }
-    main.context.get_using_provider.return_value = object()
     main.group_chat_context = SimpleNamespace(
         need_active_reply=AsyncMock(return_value=True),
         handle_message=AsyncMock(),

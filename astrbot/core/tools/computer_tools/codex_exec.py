@@ -24,6 +24,7 @@ import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import FunctionTool
@@ -36,7 +37,13 @@ from astrbot.core.computer.computer_client import get_booter
 from astrbot.core.message.message_event_result import MessageChain
 
 from ..registry import builtin_tool
-from .util import check_admin_permission, is_local_runtime, workspace_root_for_context
+from .fs import _read_allowed_roots, _write_allowed_roots
+from .util import (
+    check_local_execution_permission,
+    get_local_permission_policy,
+    is_local_runtime,
+    workspace_root_for_context,
+)
 
 _COMPUTER_RUNTIME_TOOL_CONFIG = {
     "provider_settings.computer_use_runtime": ("local", "sandbox"),
@@ -632,7 +639,12 @@ class ExecCommandTool(FunctionTool):
         max_output_tokens: Any = DEFAULT_MAX_OUTPUT_TOKENS,
         shell: str | None = None,
     ) -> ToolExecResult:
-        if permission_error := check_admin_permission(context, "Shell execution"):
+        # The Local permission policy of the caller's role, as the shell tool
+        # applies it (outside Local: the administrator gate).
+        local_policy, permission_error = check_local_execution_permission(
+            context, "Shell execution"
+        )
+        if permission_error:
             return permission_error
         event = context.context.event
         umo = event.unified_msg_origin
@@ -647,23 +659,64 @@ class ExecCommandTool(FunctionTool):
             creator_id = event.get_sender_id()
             if not creator_id:
                 return "Error: sender identity is unavailable."
-            cwd = workdir
-            if not cwd:
-                root = await workspace_root_for_context(context)
-                root.mkdir(parents=True, exist_ok=True)
-                cwd = str(root)
+            root = await workspace_root_for_context(context)
+            root.mkdir(parents=True, exist_ok=True)
+            creator_is_admin = event.role == "admin"
+            sandboxed = bool(local_policy and local_policy.requires_sandbox)
+            # A relative workdir is in the workspace. A run without host
+            # access keeps it there: the isolation mounts the working
+            # directory writable (host access mounts everything anyway).
+            cwd_path = Path(workdir).expanduser() if workdir else root
+            if not cwd_path.is_absolute():
+                cwd_path = root / cwd_path
+            cwd_path = cwd_path.resolve()
+            scope = local_policy.filesystem_scope if local_policy else "host"
+            if scope != "host" and not cwd_path.is_relative_to(root.resolve()):
+                return (
+                    f"Error: workdir must be inside the workspace ({root}) "
+                    "for this role."
+                )
+            cwd = str(cwd_path)
+            sandbox_roots = {}
+            if local_policy and local_policy.filesystem_scope == "workspace":
+                sandbox_roots = {
+                    "readable_roots": _read_allowed_roots(umo, root),
+                    "writable_roots": _write_allowed_roots(
+                        umo, root, include_installed_skills=creator_is_admin
+                    ),
+                }
             try:
                 result = await booter.shell.exec_managed(
                     cmd,
                     owner_id=umo,
                     creator_id=creator_id,
-                    creator_is_admin=event.role == "admin",
-                    sandboxed=False,
+                    creator_is_admin=creator_is_admin,
+                    sandboxed=sandboxed,
+                    permission_check=lambda: (
+                        is_local_runtime(context)
+                        and get_local_permission_policy(context) == local_policy
+                        # The original event role does not reflect admin removal.
+                        and (
+                            not creator_is_admin
+                            or str(creator_id)
+                            in context.context.context.get_config(umo=umo).get(
+                                "admins_id", []
+                            )
+                        )
+                    ),
+                    allow_network=(
+                        local_policy.allow_network if local_policy else True
+                    ),
+                    filesystem_scope=(
+                        local_policy.filesystem_scope if local_policy else "host"
+                    ),
                     cwd=cwd,
                     env={},
-                    timeout=None,
+                    # Isolated processes are capped like the shell tool's.
+                    timeout=300 if sandboxed else None,
                     yield_time_ms=wait_ms,
                     max_output_chars=budget * CHARS_PER_TOKEN,
+                    **sandbox_roots,
                 )
             except (PermissionError, ValueError) as e:
                 return f"Error: {e}"
@@ -764,7 +817,10 @@ class WriteStdinTool(FunctionTool):
         yield_time_ms: Any = 5_000,
         max_output_tokens: Any = DEFAULT_MAX_OUTPUT_TOKENS,
     ) -> ToolExecResult:
-        if permission_error := check_admin_permission(context, "Shell execution"):
+        _, permission_error = check_local_execution_permission(
+            context, "Shell execution"
+        )
+        if permission_error:
             return permission_error
         event = context.context.event
         umo = event.unified_msg_origin

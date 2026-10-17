@@ -318,3 +318,33 @@ async def test_a_wake_turn_can_be_stopped_from_the_chat(monkeypatch):
     assert ok is False
     # Gone once it ended.
     assert active_event_registry.request_agent_stop_all(UMO) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("plugin_set", "expected"), [(["*"], None), (["only_this"], ["only_this"])]
+)
+async def test_a_scheduled_task_has_only_the_sessions_plugins(
+    monkeypatch, plugin_set, expected
+):
+    seen = []
+
+    class Ctx(_RulesCtx):
+        @staticmethod
+        def get_config(umo=None):
+            return {**_RulesCtx.get_config(umo), "plugin_set": plugin_set}
+
+    async def _run(ctx, event, cfg, prompt, delivery):
+        seen.append(event.plugins_name)
+        return True
+
+    monkeypatch.setattr(wake, "run_in_session_thread", _run)
+
+    await wake.run_codex_cron_job(
+        Ctx(),
+        message="tick",
+        session_str=UMO,
+        extras={"cron_payload": {}, "cron_job": {"id": "job-1"}},
+    )
+
+    assert seen == [expected]

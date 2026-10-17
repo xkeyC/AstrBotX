@@ -64,6 +64,9 @@ async def run_codex_cron_job(
         message_type=session.message_type,
     )
     cfg = ctx.get_config(umo=event.unified_msg_origin)
+    # Only the session's enabled plugins add tools and hooks, as for a chat.
+    enabled_plugins = cfg.get("plugin_set", ["*"])
+    event.plugins_name = None if enabled_plugins == ["*"] else enabled_plugins
     # Run with the permissions of the user who created the task, matched as
     # in the group they created it in.
     if sender_id := str(payload.get("sender_id") or ""):
