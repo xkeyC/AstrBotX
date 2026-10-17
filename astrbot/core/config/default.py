@@ -358,6 +358,8 @@ CONFIG_METADATA_2 = {
                         "ws_reverse_host": "0.0.0.0",
                         "ws_reverse_port": 6199,
                         "ws_reverse_token": "",
+                        "allow_non_friend_private_message": False,
+                        "non_friend_private_reply": "",
                     },
                     "飞书(Lark)": {
                         "id": "lark",
@@ -1052,6 +1054,19 @@ CONFIG_METADATA_2 = {
                         "type": "string",
                         "hint": "反向 Websocket Token。未设置则不启用 Token 验证。",
                         "secret": True,
+                    },
+                    "allow_non_friend_private_message": {
+                        "description": "允许非好友的私聊消息",
+                        "type": "bool",
+                        "hint": "关闭后，不处理非好友（陌生人、群临时会话）发来的私聊消息。好友关系通过 get_friend_list 查询并缓存。群聊消息不受影响。",
+                    },
+                    "non_friend_private_reply": {
+                        "description": "非好友私聊提示",
+                        "type": "text",
+                        "hint": "非好友发来私聊时回复的提示，如“请先添加好友”。同一用户 10 分钟内最多提示一次。留空则不回复。",
+                        "condition": {
+                            "allow_non_friend_private_message": False,
+                        },
                     },
                     "wecom_ai_bot_name": {
                         "description": "企业微信智能机器人的名字",

@@ -61,6 +61,19 @@ class AiocqhttpAdapter(Platform):
             ),  # 以防旧版本配置不存在
         )
 
+        # OneBot private events carry no reliable friendship flag (NapCat marks
+        # every C2C message sub_type "friend"), so friendship is checked
+        # against get_friend_list, cached per bot account.
+        self.allow_non_friend_private = platform_config.get(
+            "allow_non_friend_private_message", False
+        )
+        self.non_friend_private_reply = platform_config.get(
+            "non_friend_private_reply", ""
+        ).strip()
+        self._friend_cache: dict[str, tuple[float, set[str]]] = {}
+        self._friend_cache_lock = asyncio.Lock()
+        self._non_friend_replied_at: dict[str, float] = {}
+
         @self.bot.on_request()
         async def request(event: Event) -> None:
             try:
@@ -75,6 +88,10 @@ class AiocqhttpAdapter(Platform):
         @self.bot.on_notice()
         async def notice(event: Event) -> None:
             try:
+                if event.get("notice_type") == "friend_add":
+                    cached = self._friend_cache.get(str(event.self_id))
+                    if cached:
+                        cached[1].add(str(event.user_id))
                 abm = await self.convert_message(event)
                 if abm:
                     await self.handle_msg(abm)
@@ -95,6 +112,25 @@ class AiocqhttpAdapter(Platform):
         @self.bot.on_message("private")
         async def private(event: Event) -> None:
             try:
+                if not self.allow_non_friend_private and not await self._is_friend(
+                    event
+                ):
+                    logger.debug(
+                        f"aiocqhttp: dropped a private message from non-friend {event.user_id}"
+                    )
+                    # The hint goes to each non-friend at most every 10 minutes.
+                    key = f"{event.self_id}:{event.user_id}"
+                    now = time.monotonic()
+                    if self.non_friend_private_reply and (
+                        now - self._non_friend_replied_at.get(key, -600.0) >= 600
+                    ):
+                        self._non_friend_replied_at[key] = now
+                        await self.bot.send(
+                            event,
+                            self.non_friend_private_reply,
+                            **({"self_id": event.self_id} if event.self_id else {}),
+                        )
+                    return
                 abm = await self.convert_message(event)
                 if abm:
                     await self.handle_msg(abm)
@@ -124,6 +160,41 @@ class AiocqhttpAdapter(Platform):
             session_id=session_id,
         )
         await super().send_by_session(session, message_chain)
+
+    async def _is_friend(self, event: Event) -> bool:
+        """Checks whether the sender of a private message is a friend of the bot.
+
+        The friend list is refetched when it is older than 10 minutes, or when
+        the sender is missing from it and it is older than 30 seconds (a friend
+        added without a friend_add notice). If fetching fails, the last list
+        is kept for another round; with no list at all the sender counts as a
+        non-friend.
+
+        Args:
+            event: The OneBot private message event.
+
+        Returns:
+            True if the sender is in the bot account's friend list.
+        """
+        self_id = str(event.self_id)
+        user_id = str(event.user_id)
+        async with self._friend_cache_lock:
+            fetched_at, friends = self._friend_cache.get(
+                self_id, (float("-inf"), set())
+            )
+            age = time.monotonic() - fetched_at
+            if age > 600 or (user_id not in friends and age > 30):
+                try:
+                    friend_list = await self.bot.call_action(
+                        action="get_friend_list",
+                        **({"self_id": event.self_id} if event.self_id else {}),
+                    )
+                    friends = {str(f["user_id"]) for f in friend_list or []}
+                except Exception as e:
+                    logger.warning(f"aiocqhttp: failed to fetch the friend list: {e}")
+                # A failed fetch also waits before the next try.
+                self._friend_cache[self_id] = (time.monotonic(), friends)
+            return user_id in friends
 
     async def convert_message(self, event: Event) -> AstrBotMessage | None:
         logger.debug(f"[aiocqhttp] RawMessage {event}")

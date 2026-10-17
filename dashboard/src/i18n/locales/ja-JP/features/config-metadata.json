@@ -738,6 +738,14 @@
         "description": "リバース WebSocket Token",
         "hint": "リバース WebSocket Token です。未設定の場合、Token 検証は有効になりません。"
       },
+      "allow_non_friend_private_message": {
+        "description": "友だち以外からのプライベートメッセージを許可",
+        "hint": "オフにすると、友だち以外（知らない人、グループの一時チャット）からのプライベートメッセージを処理しません。友だち関係は get_friend_list で確認し、キャッシュします。グループメッセージには影響しません。"
+      },
+      "non_friend_private_reply": {
+        "description": "友だち以外への案内メッセージ",
+        "hint": "友だち以外からプライベートメッセージが届いたときに返信する案内です（例：「先に友だち追加してください」）。同じユーザーには 10 分に 1 回まで。空欄の場合は返信しません。"
+      },
       "msg_push_webhook_url": {
         "description": "WeCom メッセージプッシュ Webhook URL",
         "hint": "任意項目です。プロアクティブメッセージのプッシュに使用します。WeCom グループの「メッセージプッシュ」から URL を取得してください。より良いメッセージ送信体験のため、設定を推奨します。"

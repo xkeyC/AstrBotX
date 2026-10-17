@@ -736,6 +736,14 @@
         "description": "Reverse WebSocket Token",
         "hint": "Reverse WebSocket token. If not set, token verification is disabled."
       },
+      "allow_non_friend_private_message": {
+        "description": "Allow private messages from non-friends",
+        "hint": "When off, private messages from non-friends (strangers, group temporary chats) are ignored. Friendship is checked with get_friend_list and cached. Group messages are not affected."
+      },
+      "non_friend_private_reply": {
+        "description": "Reply to non-friends",
+        "hint": "Sent when a non-friend messages privately, e.g. \"Please add me as a friend first\". At most once per user every 10 minutes. Leave empty to stay silent."
+      },
       "msg_push_webhook_url": {
         "description": "WeCom Message Push Webhook URL",
         "hint": "Used for proactive message push. It is strongly recommended to set this for a better message sending experience."
