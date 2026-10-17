@@ -82,7 +82,9 @@ def mock_knowledge_base():
 @pytest.fixture
 def mock_embedding_provider():
     """Create a mock EmbeddingProvider."""
-    provider = MagicMock()
+    from astrbot.core.provider.provider import EmbeddingProvider
+
+    provider = MagicMock(spec=EmbeddingProvider)
     provider.get_embeddings_batch = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
     return provider
 
@@ -303,3 +305,83 @@ async def test_ensure_vec_db_sets_init_error_on_failure(
         # Verify: init_error should NOT be cleared (still has previous error)
         # Note: _ensure_vec_db doesn't set init_error; that's done by the caller
         assert helper.init_error is not None
+
+
+def _bare_helper(kb, prov_mgr, kb_db):
+    from astrbot.core.knowledge_base.kb_helper import KBHelper
+
+    helper = KBHelper.__new__(KBHelper)
+    helper.kb = kb
+    helper.prov_mgr = prov_mgr
+    helper.kb_db = kb_db
+    helper.kb_root_dir = "/tmp/test_kb"
+    helper.chunker = MagicMock()
+    helper.init_error = None
+    helper.kb_dir = Path("/tmp/test_kb") / kb.kb_id
+    return helper
+
+
+@pytest.mark.asyncio
+async def test_get_ep_rejects_a_chat_provider_fallback(
+    stub_provider_manager_module,
+    mock_provider_manager,
+    mock_kb_db,
+    mock_knowledge_base,
+):
+    """An unknown embedding id resolves to the Codex chat provider; the
+    knowledge base reports a missing embedding provider instead of using it."""
+    from astrbot.core.knowledge_base.kb_helper import KBProviderUnavailableError
+    from astrbot.core.provider.provider import Provider
+
+    mock_provider_manager.get_provider_by_id.return_value = MagicMock(spec=Provider)
+    helper = _bare_helper(mock_knowledge_base, mock_provider_manager, mock_kb_db)
+
+    with pytest.raises(KBProviderUnavailableError, match="test-embedding-provider"):
+        await helper.get_ep()
+
+
+@pytest.mark.asyncio
+async def test_get_rp_skips_a_provider_that_cannot_rerank(
+    stub_provider_manager_module,
+    mock_provider_manager,
+    mock_kb_db,
+    mock_knowledge_base,
+):
+    from astrbot.core.provider.provider import Provider
+
+    mock_knowledge_base.rerank_provider_id = "gone-rerank"
+    mock_provider_manager.get_provider_by_id.return_value = MagicMock(spec=Provider)
+    helper = _bare_helper(mock_knowledge_base, mock_provider_manager, mock_kb_db)
+
+    assert await helper.get_rp() is None
+
+
+@pytest.mark.asyncio
+async def test_load_kbs_reports_a_missing_provider_without_a_traceback(
+    stub_provider_manager_module,
+    mock_provider_manager,
+    mock_kb_db,
+    mock_knowledge_base,
+    tmp_path,
+):
+    from astrbot.core.knowledge_base import kb_mgr as kb_mgr_module
+    from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
+    from astrbot.core.provider.provider import Provider
+
+    mock_provider_manager.get_provider_by_id.return_value = MagicMock(spec=Provider)
+    mock_kb_db.list_kbs = AsyncMock(return_value=[mock_knowledge_base])
+    manager = KnowledgeBaseManager.__new__(KnowledgeBaseManager)
+    manager.kb_db = mock_kb_db
+    manager.provider_manager = mock_provider_manager
+    manager.kb_insts = {}
+
+    with (
+        patch.object(kb_mgr_module, "FILES_PATH", str(tmp_path)),
+        patch.object(kb_mgr_module, "logger") as logger,
+    ):
+        await manager.load_kbs()
+
+    helper = manager.kb_insts[mock_knowledge_base.kb_id]
+    assert "test-embedding-provider" in helper.init_error
+    logger.error.assert_called_once()
+    assert "exc_info" not in logger.error.call_args.kwargs

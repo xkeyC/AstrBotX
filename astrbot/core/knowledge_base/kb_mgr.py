@@ -9,7 +9,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_knowledge_base_path
 # from .chunking.fixed_size import FixedSizeChunker
 from .chunking.recursive import RecursiveCharacterChunker
 from .kb_db_sqlite import KBSQLiteDatabase
-from .kb_helper import KBHelper
+from .kb_helper import KBHelper, KBProviderUnavailableError
 from .models import KBDocument, KnowledgeBase
 from .retrieval.manager import RetrievalManager, RetrievalResult
 from .retrieval.rank_fusion import RankFusion
@@ -76,6 +76,10 @@ class KnowledgeBaseManager:
             )
             try:
                 await kb_helper.initialize()
+            except KBProviderUnavailableError as e:
+                # A setting to fix in the knowledge base, not a fault.
+                kb_helper.init_error = str(e)
+                logger.error(f"知识库 {record.kb_name}({record.kb_id}) 初始化失败: {e}")
             except Exception as e:
                 kb_helper.init_error = str(e)
                 logger.error(

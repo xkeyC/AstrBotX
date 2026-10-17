@@ -120,6 +120,10 @@ def _compact_chunks(chunks: list[str]) -> list[str]:
     return [chunk.strip() for chunk in chunks if chunk and chunk.strip()]
 
 
+class KBProviderUnavailableError(ValueError):
+    """A knowledge base names an embedding provider that is not configured."""
+
+
 class KBHelper:
     vec_db: BaseVecDB
     kb: KnowledgeBase
@@ -152,23 +156,23 @@ class KBHelper:
 
     async def get_ep(self) -> EmbeddingProvider:
         if not self.kb.embedding_provider_id:
-            raise ValueError(f"知识库 {self.kb.kb_name} 未配置 Embedding Provider")
-        ep: EmbeddingProvider = await self.prov_mgr.get_provider_by_id(
-            self.kb.embedding_provider_id,
-        )  # type: ignore
-        if not ep:
-            raise ValueError(
-                f"无法找到 ID 为 {self.kb.embedding_provider_id} 的 Embedding Provider",
+            raise KBProviderUnavailableError(
+                f"知识库 {self.kb.kb_name} 未配置 Embedding Provider"
+            )
+        ep = await self.prov_mgr.get_provider_by_id(self.kb.embedding_provider_id)
+        # An unknown id resolves to the Codex chat provider, which cannot embed.
+        if not isinstance(ep, EmbeddingProvider):
+            raise KBProviderUnavailableError(
+                f"无法找到 ID 为 {self.kb.embedding_provider_id} 的 Embedding "
+                "Provider，请在知识库设置中重新选择嵌入模型",
             )
         return ep
 
     async def get_rp(self) -> RerankProvider | None:
         if not self.kb.rerank_provider_id:
             return None
-        rp: RerankProvider | None = await self.prov_mgr.get_provider_by_id(
-            self.kb.rerank_provider_id,
-        )  # type: ignore
-        if not rp:
+        rp = await self.prov_mgr.get_provider_by_id(self.kb.rerank_provider_id)
+        if not isinstance(rp, RerankProvider):
             logger.warning(
                 f"知识库 {self.kb.kb_name}({self.kb.kb_id}) 的 Rerank Provider({self.kb.rerank_provider_id}) 不可用，将跳过重排序。",
             )
@@ -177,7 +181,9 @@ class KBHelper:
 
     async def _ensure_vec_db(self) -> "FaissVecDB":
         if not self.kb.embedding_provider_id:
-            raise ValueError(f"知识库 {self.kb.kb_name} 未配置 Embedding Provider")
+            raise KBProviderUnavailableError(
+                f"知识库 {self.kb.kb_name} 未配置 Embedding Provider"
+            )
 
         ep = await self.get_ep()
         rp: RerankProvider | None = None
