@@ -344,7 +344,6 @@ async def mock_context(
     astrbot_config_mgr = MagicMock()
     knowledge_base_manager = MagicMock()
     cron_manager = MagicMock()
-    subagent_orchestrator = None
 
     context = Context(
         event_queue,
@@ -358,7 +357,6 @@ async def mock_context(
         astrbot_config_mgr,
         knowledge_base_manager,
         cron_manager,
-        subagent_orchestrator,
     )
 
     return context

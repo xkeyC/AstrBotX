@@ -31,7 +31,6 @@ import enUSKnowledgeBaseDetail from './features/knowledge-base/detail.json';
 import enUSKnowledgeBaseDocument from './features/knowledge-base/document.json';
 import enUSPersona from './features/persona.json';
 import enUSCommand from './features/command.json';
-import enUSSubagent from './features/subagent.json';
 import enUSCodex from './features/codex.json';
 import enUSPermissions from './features/permissions.json';
 import enUSWelcome from './features/welcome.json';
@@ -79,7 +78,6 @@ export default {
       },
       persona: enUSPersona,
       command: enUSCommand,
-      subagent: enUSSubagent,
       codex: enUSCodex,
       permissions: enUSPermissions,
       welcome: enUSWelcome

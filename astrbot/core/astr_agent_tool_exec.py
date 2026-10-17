@@ -348,11 +348,7 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         event = run_context.context.event
         umo = event.unified_msg_origin
 
-        # Use per-subagent provider override if configured; otherwise fall back
-        # to the current/default provider resolution.
-        prov_id = getattr(
-            tool, "provider_id", None
-        ) or await ctx.get_current_chat_provider_id(umo)
+        prov_id = await ctx.get_current_chat_provider_id(umo)
 
         # prepare begin dialogs
         contexts = None

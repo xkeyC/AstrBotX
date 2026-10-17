@@ -37,7 +37,6 @@ from astrbot.core.star.filter.platform_adapter_type import (
     ADAPTER_NAME_2_TYPE,
     PlatformAdapterType,
 )
-from astrbot.core.subagent_orchestrator import SubAgentOrchestrator
 from astrbot.core.utils.astrbot_path import get_astrbot_system_tmp_path
 
 from ..exceptions import ProviderNotFoundError
@@ -50,6 +49,7 @@ logger = logging.getLogger("astrbot")
 
 if TYPE_CHECKING:
     from astrbot.core.cron.manager import CronJobManager
+    from astrbot.core.local_infra.client import LocalInfraClient
     from astrbot.core.utils.t2i.renderer import HtmlRenderer
 
 WebApiHandler = Callable[..., Awaitable[Any]]
@@ -156,7 +156,6 @@ class Context:
         astrbot_config_mgr: AstrBotConfigManager,
         knowledge_base_manager: KnowledgeBaseManager,
         cron_manager: CronJobManager,
-        subagent_orchestrator: SubAgentOrchestrator | None = None,
     ) -> None:
         self._event_queue = event_queue
         """事件队列。消息平台通过事件队列传递消息事件。"""
@@ -180,7 +179,6 @@ class Context:
         """知识库管理器"""
         self.cron_manager = cron_manager
         """Cron job manager, initialized by core lifecycle."""
-        self.subagent_orchestrator = subagent_orchestrator
         global _current
         _current = self
 
@@ -496,6 +494,20 @@ class Context:
     def get_all_embedding_providers(self) -> list[EmbeddingProvider]:
         """获取所有用于 Embedding 任务的 Provider。"""
         return self.provider_manager.embedding_provider_insts
+
+    def get_local_infra(self) -> LocalInfraClient | None:
+        """获取本地多模态服务（local-multimodal-infra）的客户端。
+
+        地址、令牌与各服务所用模型来自 WebUI“模型提供商 → 本地多模态服务”。
+        客户端提供 synthesize（TTS）、transcribe（ASR）、embed、rerank、
+        moderate、ocr_lines、detect_objects，以及通用的 run_task / download。
+
+        Returns:
+            客户端；本地多模态服务未启用时返回 None。
+        """
+        from astrbot.core.local_infra import get_local_infra
+
+        return get_local_infra()
 
     @deprecated(reason="Use get_using_provider_async() instead.")
     def get_using_provider(self, umo: str | None = None) -> Provider | None:

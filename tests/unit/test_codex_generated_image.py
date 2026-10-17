@@ -18,9 +18,9 @@ from astrbot.core.agent.runners.codex.codex_agent_runner import (
 UMO = "aiocqhttp:GroupMessage:30003"
 
 
-def _runner(runtime: str = "sandbox", *, shipyard: bool = False):
+def _runner(runtime: str = "sandbox"):
     runner = CodexAgentRunner.__new__(CodexAgentRunner)
-    runner.cfg = {"shipyard_mode": shipyard}
+    runner.cfg = {}
     runner.umo = UMO
 
     class _PluginCtx:
@@ -98,24 +98,18 @@ async def test_sandbox_runtime_uploads_into_the_sandbox_workspace(monkeypatch, i
 
 
 @pytest.mark.asyncio
-async def test_shipyard_mode_always_means_the_sandbox(monkeypatch, image):
-    """shipyard 模式下即使配置写的是 local，也只能放进沙箱。"""
-    uploads = []
+async def test_a_leftover_shipyard_key_does_not_override_the_runtime(
+    monkeypatch, image, tmp_path
+):
+    """运行环境是唯一开关：残留的 shipyard_mode 不再把图片送进沙箱。"""
+    workspace = tmp_path / "workspace"
+    import astrbot.core.tools.computer_tools.util as util
 
-    class _Booter:
-        async def upload_file(self, path, name):
-            uploads.append(name)
+    monkeypatch.setattr(util, "workspace_root", lambda umo: workspace)
+    runner = _runner("none")
+    runner.cfg = {"shipyard_mode": True}
 
-    async def _get_booter(ctx, umo):
-        return _Booter()
-
-    import astrbot.core.computer.computer_client as client
-
-    monkeypatch.setattr(client, "get_booter", _get_booter)
-
-    await _runner("local", shipyard=True)._place_generated_image(str(image))
-
-    assert uploads == [f"{GENERATED_IMAGE_DIR}/call-1.png"]
+    assert runner._computer_runtime() == "none"
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,6 @@
     "logs": "ログ",
     "trace": "トレース"
   },
-  "subagent": "サブエージェント編成",
   "codex": "Codex",
   "permissions": "権限ルール",
   "toolUse": "MCP",

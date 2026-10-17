@@ -101,17 +101,31 @@ async def service(monkeypatch):
     monkeypatch.setattr(
         cm,
         "astrbot_config",
-        {
-            "content_moderation_url": str(server.make_url("")),
-            "platform": [
+        _conf(
+            str(server.make_url("")),
+            platform=[
                 {"id": "qq", "content_moderation": "text_only"},
                 {"id": "mumble", "content_moderation": "disabled"},
                 {"id": "tg"},
             ],
-        },
+        ),
     )
     yield fake
     await server.close()
+
+
+def _conf(url="", token="", platform=None, **moderation):
+    """An AstrBot config with the local-multimodal-infra server at ``url``
+    (off when empty) and these moderation options."""
+    return {
+        "local_infra": {
+            "enable": bool(url),
+            "base_url": url,
+            "token": token,
+            "services": {"moderation": {"enable": True, **moderation}},
+        },
+        "platform": platform or [],
+    }
 
 
 def _image(tmp_path, data=PNG, name="a.png"):
@@ -124,17 +138,22 @@ def test_platform_modes(monkeypatch):
     monkeypatch.setattr(
         cm,
         "astrbot_config",
-        {
-            "content_moderation_url": "http://127.0.0.1:17890",
-            "platform": [{"id": "qq", "content_moderation": "text_only"}, {"id": "tg"}],
-        },
+        _conf(
+            "http://127.0.0.1:17890",
+            platform=[{"id": "qq", "content_moderation": "text_only"}, {"id": "tg"}],
+        ),
     )
     assert cm.service_url() == "http://127.0.0.1:17890/v1/moderations"
     assert cm.platform_mode("qq") == cm.MODE_TEXT_ONLY
     # Platforms without the setting, and input of no platform, get it all.
     assert cm.platform_mode("tg") == cm.MODE_ENABLED
     assert cm.platform_mode("") == cm.MODE_ENABLED
-    monkeypatch.setattr(cm, "astrbot_config", {"content_moderation_url": ""})
+    monkeypatch.setattr(cm, "astrbot_config", _conf(""))
+    assert cm.platform_mode("tg") == cm.MODE_DISABLED
+    # The moderation service switched off.
+    conf = _conf("http://127.0.0.1:17890", platform=[{"id": "tg"}])
+    conf["local_infra"]["services"]["moderation"]["enable"] = False
+    monkeypatch.setattr(cm, "astrbot_config", conf)
     assert cm.platform_mode("tg") == cm.MODE_DISABLED
 
 
@@ -179,9 +198,7 @@ async def test_service_failures(service, tmp_path, status, with_image, expected)
 
 @pytest.mark.asyncio
 async def test_service_down(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        cm, "astrbot_config", {"content_moderation_url": "http://127.0.0.1:9"}
-    )
+    monkeypatch.setattr(cm, "astrbot_config", _conf("http://127.0.0.1:9"))
     assert await cm.check_message(["hello"], []) == []
     assert await cm.check_message(["hello"], [_image(tmp_path)]) == [cm.UNAVAILABLE]
     assert await cm.flagged_texts(["a", "b"]) == [None, None]
@@ -1140,42 +1157,43 @@ async def test_the_history_tool_leaves_out_flagged_messages(service, tmp_path):
 # ------------------------------------------------------------ thresholds
 
 
-def test_thresholds_come_from_the_system_settings(monkeypatch):
-    monkeypatch.setattr(
-        cm,
-        "astrbot_config",
-        {
-            "content_moderation_threshold": 0.5,
-            "content_moderation_nsfw_threshold": "0.3",
-        },
-    )
-    assert cm.check_options() == {"threshold": 0.5, "nsfw_threshold": 0.3}
+def test_thresholds_come_from_the_moderation_options(monkeypatch):
+    def options(**moderation):
+        monkeypatch.setattr(cm, "astrbot_config", _conf("http://x", **moderation))
+        return cm.check_options()
+
+    assert options(threshold=0.5, nsfw_threshold="0.3") == {
+        "threshold": 0.5,
+        "nsfw_threshold": 0.3,
+        "nsfw_labels": ["low", "medium", "high"],
+        "categories": cm_categories(),
+    }
     # Values the service would reject leave its default in place.
-    for bad in (1, 1.5, -0.1, "x"):
-        monkeypatch.setattr(cm, "astrbot_config", {"content_moderation_threshold": bad})
-        assert cm.check_options() == {}
-    monkeypatch.setattr(cm, "astrbot_config", {})
-    assert cm.check_options() == {}
+    for bad in (1, 1.5, -0.1):
+        assert "threshold" not in options(threshold=bad)
+    assert options(threshold="x")["threshold"] == 0.9
     # Image levels: sent as chosen; none chosen keeps the service's.
-    monkeypatch.setattr(
-        cm, "astrbot_config", {"content_moderation_nsfw_labels": ["medium", " high"]}
-    )
-    assert cm.check_options() == {"nsfw_labels": ["medium", "high"]}
-    monkeypatch.setattr(cm, "astrbot_config", {"content_moderation_nsfw_labels": []})
-    assert cm.check_options() == {}
+    assert options(nsfw_labels=["medium", " high"])["nsfw_labels"] == [
+        "medium",
+        "high",
+    ]
+    assert "nsfw_labels" not in options(nsfw_labels=[])
     # Text categories likewise; none selected means all (sent as nothing).
-    monkeypatch.setattr(
-        cm, "astrbot_config", {"content_moderation_categories": ["violent", "pii"]}
-    )
-    assert cm.check_options() == {"categories": ["violent", "pii"]}
-    monkeypatch.setattr(cm, "astrbot_config", {"content_moderation_categories": []})
-    assert cm.check_options() == {}
+    assert options(categories=["violent", "pii"])["categories"] == ["violent", "pii"]
+    assert "categories" not in options(categories=[])
+
+
+def cm_categories():
+    from astrbot.core.local_infra.config import MODERATION_CATEGORIES
+
+    return list(MODERATION_CATEGORIES)
 
 
 @pytest.mark.asyncio
 async def test_every_check_carries_the_thresholds(service, tmp_path):
-    cm.astrbot_config["content_moderation_threshold"] = 0.7
-    cm.astrbot_config["content_moderation_nsfw_threshold"] = 0.2
+    options = cm.astrbot_config["local_infra"]["services"]["moderation"]
+    options["threshold"] = 0.7
+    options["nsfw_threshold"] = 0.2
 
     await cm.check_message(["hi"], [_image(tmp_path)])
     await cm.flagged_texts(["a"])
@@ -1189,7 +1207,7 @@ async def test_every_check_carries_the_thresholds(service, tmp_path):
 @pytest.mark.asyncio
 async def test_a_token_is_sent_when_set(service):
     await cm.check_message(["hi"], [])
-    cm.astrbot_config["content_moderation_token"] = " s3cret "
+    cm.astrbot_config["local_infra"]["token"] = " s3cret "
     await cm.flagged_texts(["a"])
 
     assert service.auth == [None, "Bearer s3cret"]
@@ -1198,13 +1216,9 @@ async def test_a_token_is_sent_when_set(service):
 def test_the_blocked_reply_can_be_set(monkeypatch):
     monkeypatch.setattr(cm, "astrbot_config", {})
     assert cm.blocked_reply() == cm.BLOCKED_REPLY
-    monkeypatch.setattr(
-        cm, "astrbot_config", {"content_moderation_blocked_reply": "  "}
-    )
+    monkeypatch.setattr(cm, "astrbot_config", _conf("", blocked_reply="  "))
     assert cm.blocked_reply() == cm.BLOCKED_REPLY
-    monkeypatch.setattr(
-        cm, "astrbot_config", {"content_moderation_blocked_reply": "换个说法试试吧"}
-    )
+    monkeypatch.setattr(cm, "astrbot_config", _conf("", blocked_reply="换个说法试试吧"))
     assert cm.blocked_reply() == "换个说法试试吧"
 
 

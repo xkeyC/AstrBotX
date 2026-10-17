@@ -57,11 +57,8 @@
   "dialogs": {
     "view": {
       "title": "Conversation Details",
-      "editMode": "Edit Conversation",
-      "previewMode": "Preview Mode",
-      "saveChanges": "Save Changes",
       "close": "Close",
-      "confirmClose": "You have unsaved changes, are you sure you want to close?"
+      "mirrorNotice": "This is AstrBot's mirror of the conversation, for viewing only. Codex keeps the real context in its own thread and does not read this record."
     },
     "edit": {
       "title": "Edit Conversation Information",
@@ -92,9 +89,6 @@
     "deleteSuccess": "Delete successful",
     "deleteError": "Delete failed",
     "historyError": "Failed to fetch conversation history",
-    "historySaveSuccess": "Conversation history saved successfully",
-    "historySaveError": "Failed to save conversation history",
-    "invalidJson": "Invalid JSON format",
     "noItemSelected": "Please select conversations to delete first",
     "batchDeleteSuccess": "Successfully deleted {count} conversations",
     "batchDeleteError": "Batch delete failed",

@@ -279,8 +279,20 @@ def _runner_config() -> dict:
 
 
 def realtime_voice_config() -> dict:
-    """The runner's realtime voice settings (``realtime_voice``)."""
-    return _runner_config()["realtime_voice"]
+    """The runner's realtime voice settings (``realtime_voice``), with the
+    local-multimodal-infra server's realtime WebSocket and token
+    (``infra_url``, ``infra_token``) from the ``local_infra`` setting;
+    ``infra_url`` is empty while the server or its realtime voice service is
+    off."""
+    from astrbot.core.local_infra.catalog import catalog
+    from astrbot.core.local_infra.config import local_infra_settings, realtime_url
+
+    voice = dict(_runner_config()["realtime_voice"])
+    infra = local_infra_settings(astrbot_config)
+    available = catalog.resolve("realtime_voice", infra)["available"]
+    voice["infra_url"] = realtime_url(infra) if available else ""
+    voice["infra_token"] = infra["token"]
+    return voice
 
 
 def new_voice_session(**kwargs) -> VoiceSession:

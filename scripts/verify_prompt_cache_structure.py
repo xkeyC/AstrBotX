@@ -72,7 +72,6 @@ CONFIG = {
         "datetime_system_prompt": True,
         "image_caption_prompt": "Describe the image.",
         "computer_use_runtime": "none",
-        "web_search": False,
     },
     "provider_ltm_settings": {
         "group_icl_enable": True,
@@ -254,7 +253,6 @@ def make_plugin_context(conversations, personas) -> MagicMock:
     context.persona_manager = personas
     context.get_llm_tool_manager.return_value = tool_manager
     context.get_provider_by_id.return_value = None
-    context.subagent_orchestrator = None
     context._db = None
     return context
 

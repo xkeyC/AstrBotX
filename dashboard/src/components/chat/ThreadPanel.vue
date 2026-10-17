@@ -83,7 +83,6 @@ const props = defineProps<{
   thread: ChatThread | null;
   isDark: boolean;
   deleting?: boolean;
-  getProviderSelection: () => { providerId: string; modelName: string };
 }>();
 
 const emit = defineEmits<{
@@ -157,7 +156,6 @@ async function send() {
   const abort = new AbortController();
   sending.value = true;
   try {
-    const selection = props.getProviderSelection();
     const response = await fetchWithAuth(
       chatApi.sendThreadMessageUrl(props.thread.thread_id),
       {
@@ -169,8 +167,6 @@ async function send() {
           message: [{ type: "plain", text }],
           flags: buildChatRequestFlags(),
           locale: locale.value,
-          selected_provider: selection.providerId,
-          selected_model: selection.modelName,
         }),
         signal: abort.signal,
       },

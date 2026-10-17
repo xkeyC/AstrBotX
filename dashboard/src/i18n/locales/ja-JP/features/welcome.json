@@ -5,15 +5,15 @@
     "evening": "こんばんは。AstrBot へようこそ",
     "newYear": "あけましておめでとうございます！"
   },
-  "subtitle": "まずクイックガイドを完了しましょう。プラットフォームと会話プロバイダーは後から設定することもできます。",
+  "subtitle": "まずクイックガイドを完了しましょう。プラットフォームと Codex モデルは後から設定することもできます。",
   "announcement": {
     "title": "お知らせ"
   },
   "onboard": {
     "title": "クイックガイド",
     "subtitle": "このページで初期設定を完了できます。",
-    "step1Title": "AI モデルを設定",
-    "step1Desc": "AstrBot で使用する AI モデルを設定します。",
+    "step1Title": "Codex モデルを設定",
+    "step1Desc": "エージェントは Codex で動作し、会話モデルは Codex ページでのみ設定します。ChatGPT アカウントまたは OpenAI API キーでログインするか、カスタムモデルプロバイダーを追加してから、モデルを選択してください。",
     "step2Title": "プラットフォームボットを設定",
     "step2Desc": "AstrBot を QQ、Lark、WeCom、Telegram などの IM プラットフォームに接続します。",
     "step3Title": "エージェントにコンピューターの使用を許可",
@@ -24,6 +24,7 @@
     "step3HelpClose": "閉じる",
     "step3SelectLabel": "コンピューターへのアクセス権限",
     "step3Allow": "許可",
+    "step3Sandbox": "サンドボックスのみ（Shipyard など）",
     "step3Deny": "許可しない",
     "configure": "設定する",
     "save": "保存",
@@ -32,9 +33,6 @@
     "completed": "完了",
     "skipped": "スキップ済み",
     "platformLoadFailed": "プラットフォーム設定を読み込めませんでした",
-    "providerLoadFailed": "プロバイダー設定を読み込めませんでした",
-    "providerUpdateFailed": "default 設定ファイルのデフォルト会話プロバイダーを更新できませんでした",
-    "providerDefaultUpdated": "default 設定ファイルのデフォルト会話プロバイダーを {id} に設定しました",
     "computerAccessUpdateFailed": "エージェントのコンピューターアクセス権限を更新できませんでした",
     "computerAccessAllowed": "エージェントにコンピューターへのアクセスと使用を許可しました",
     "computerAccessDenied": "エージェントによるコンピューターへのアクセスと使用を許可しませんでした",

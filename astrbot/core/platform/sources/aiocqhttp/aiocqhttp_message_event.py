@@ -20,6 +20,7 @@ from astrbot.api.message_components import (
     Video,
 )
 from astrbot.api.platform import Group, MessageMember
+from astrbot.core.platform.message_type import MessageType
 from astrbot.core.utils.media_utils import file_uri_to_path, is_file_uri
 
 # 协议端报告"文件不存在"的几种说法。命中这些说明它读不到本机路径，
@@ -58,6 +59,33 @@ def _is_missing_file_error(exc: BaseException) -> bool:
     return any(hint in text for hint in _MISSING_FILE_HINTS)
 
 
+#: Seconds a pre-reply reaction may take before the reply goes on without it.
+REACTION_TIMEOUT_S = 5
+
+
+def qq_emoji_id(emoji: str) -> str:
+    """The ``emoji_id`` of ``set_msg_emoji_like`` for an emoji setting.
+
+    Digits are a QQ face id; anything else must be one Unicode emoji (an
+    optional variation selector U+FE0F aside), sent as the decimal code
+    point. NapCat reads ids longer than 3 digits as Unicode emoji, so code
+    points below 1000 (``#``, ``©``) and sequences (keycaps, flags, ZWJ
+    families, skin tones) cannot be sent and are refused.
+
+    Raises:
+        ValueError: The setting is neither a face id nor one sendable emoji.
+    """
+    emoji = emoji.strip()
+    if emoji.isascii() and emoji.isdigit():
+        return emoji
+    code_points = [ord(char) for char in emoji if char != "️"]
+    if len(code_points) != 1 or code_points[0] < 1000:
+        raise ValueError(
+            f"{emoji!r} is neither a QQ face id nor a single Unicode emoji"
+        )
+    return str(code_points[0])
+
+
 class AiocqhttpMessageEvent(AstrMessageEvent):
     def __init__(
         self,
@@ -69,6 +97,28 @@ class AiocqhttpMessageEvent(AstrMessageEvent):
     ) -> None:
         super().__init__(message_str, message_obj, platform_meta, session_id)
         self.bot = bot
+
+    async def react(self, emoji: str) -> None:
+        """Reacts to this message with an emoji (NapCatQQ ``set_msg_emoji_like``).
+
+        Args:
+            emoji: A QQ face id (``"76"``, ``"124"``) or one Unicode emoji,
+                sent as its code point. QQ shows reactions in groups only, so
+                private messages get none.
+        """
+        if self.get_message_type() != MessageType.GROUP_MESSAGE:
+            return
+        # A stalled protocol end must not hold up the reply (the OneBot API
+        # timeout is minutes).
+        await asyncio.wait_for(
+            self.bot.call_action(
+                "set_msg_emoji_like",
+                message_id=self.message_obj.message_id,
+                emoji_id=qq_emoji_id(emoji),
+                set=True,
+            ),
+            REACTION_TIMEOUT_S,
+        )
 
     @staticmethod
     async def _from_segment_to_dict(segment: BaseMessageComponent) -> dict:

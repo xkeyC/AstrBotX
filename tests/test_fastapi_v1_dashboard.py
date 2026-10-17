@@ -556,6 +556,16 @@ class FakePersonaManager:
     async def delete_persona(self, persona_id: str) -> None:
         self.personas.pop(persona_id, None)
 
+    async def clone_persona(self, source_persona_id: str, new_persona_id: str):
+        source = self.personas.get(source_persona_id)
+        if source is None:
+            raise ValueError(f"Persona with ID {source_persona_id} does not exist.")
+        if new_persona_id in self.personas:
+            raise ValueError(f"Persona with ID {new_persona_id} already exists.")
+        clone = SimpleNamespace(**{**vars(source), "persona_id": new_persona_id})
+        self.personas[new_persona_id] = clone
+        return clone
+
     async def move_persona_to_folder(
         self,
         persona_id: str,
@@ -4403,3 +4413,32 @@ async def test_v1_platform_webhook_preserves_tuple_response(
     assert response.status_code == 202
     assert response.headers["content-type"] == "text/plain"
     assert response.text == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_persona_clone(
+    asgi_client: httpx.AsyncClient,
+    fake_core_lifecycle,
+):
+    """The WebUI's persona cloning has its route (lost in the FastAPI move)."""
+    persona_mgr = fake_core_lifecycle.persona_mgr
+    headers = _jwt_headers()
+
+    response = await asgi_client.post(
+        "/api/persona/clone",
+        json={"source_persona_id": "persona/foo", "new_persona_id": "persona/bar"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["persona"]["persona_id"] == "persona/bar"
+    assert data["persona"]["system_prompt"] == "Demo persona"
+    assert "persona/bar" in persona_mgr.personas
+
+    # An existing id is refused.
+    response = await asgi_client.post(
+        "/api/persona/clone",
+        json={"source_persona_id": "persona/foo", "new_persona_id": "persona/bar"},
+        headers=headers,
+    )
+    assert response.json()["status"] == "error"

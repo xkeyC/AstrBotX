@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import uuid
 from collections.abc import AsyncIterator
 from copy import deepcopy
@@ -11,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from astrbot.core import logger, sp
+from astrbot.core import logger
 from astrbot.core.agent.message import get_checkpoint_id, is_checkpoint_message
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
 from astrbot.core.db import BaseDatabase
@@ -142,7 +141,6 @@ def build_bot_history_content(
     message_parts: list[dict],
     *,
     agent_stats: dict | None = None,
-    refs: dict | None = None,
     include_reasoning_field: bool = True,
 ) -> dict[str, Any]:
     normalized_parts = normalize_reasoning_message_parts(message_parts)
@@ -152,8 +150,6 @@ def build_bot_history_content(
         content["reasoning"] = reasoning
     if agent_stats:
         content["agent_stats"] = agent_stats
-    if refs:
-        content["refs"] = refs
     return content
 
 
@@ -268,57 +264,6 @@ class BotMessageAccumulator:
         except json.JSONDecodeError:
             return None
         return parsed if isinstance(parsed, dict) else None
-
-
-def extract_web_search_refs(accumulated_text: str, accumulated_parts: list) -> dict:
-    supported = [
-        "web_search_baidu",
-        "web_search_tavily",
-        "web_search_bocha",
-        "web_search_brave",
-        "web_search_deepseek",
-        "web_search_serpapi",
-        "image_search_serpapi",
-        "finance_search_serpapi",
-        "scholar_search_serpapi",
-    ]
-    web_search_results = {}
-    tool_call_parts = [
-        p
-        for p in accumulated_parts
-        if p.get("type") == "tool_call" and p.get("tool_calls")
-    ]
-
-    for part in tool_call_parts:
-        for tool_call in part["tool_calls"]:
-            if tool_call.get("name") not in supported or not tool_call.get("result"):
-                continue
-            try:
-                result_data = json.loads(tool_call["result"])
-                for item in result_data.get("results", []):
-                    if idx := item.get("index"):
-                        web_search_results[idx] = {
-                            "url": item.get("url"),
-                            "title": item.get("title"),
-                            "snippet": item.get("snippet"),
-                        }
-            except (json.JSONDecodeError, KeyError):
-                pass
-
-    if not web_search_results:
-        return {}
-
-    ref_indices = {m.strip() for m in re.findall(r"<ref>(.*?)</ref>", accumulated_text)}
-    used_refs = []
-    for ref_index in ref_indices:
-        if ref_index not in web_search_results:
-            continue
-        payload = {"index": ref_index, **web_search_results[ref_index]}
-        if favicon := sp.temporary_cache.get("_ws_favicon", {}).get(payload["url"]):
-            payload["favicon"] = favicon
-        used_refs.append(payload)
-
-    return {"used": used_refs} if used_refs else {}
 
 
 def sanitize_message_content(content: dict) -> dict:
@@ -542,7 +487,6 @@ class ChatRunState:
     subscribers: set[asyncio.Queue] = field(default_factory=set)
     message_parts: list[dict] = field(default_factory=list)
     agent_stats: dict = field(default_factory=dict)
-    refs: dict = field(default_factory=dict)
     revision: int = 0
     status: str = "running"
     task: asyncio.Task[None] | None = None
@@ -902,7 +846,6 @@ class ChatService:
         webchat_conv_id: str,
         message_parts: list[dict],
         agent_stats: dict,
-        refs: dict,
         llm_checkpoint_id: str | None = None,
         platform_history_id: str = "webchat",
     ):
@@ -912,7 +855,6 @@ class ChatService:
             content=build_bot_history_content(
                 message_parts,
                 agent_stats=agent_stats,
-                refs=refs,
             ),
             sender_id="bot",
             sender_name="bot",
@@ -943,7 +885,6 @@ class ChatService:
                     "content": build_bot_history_content(
                         deepcopy(run.message_parts),
                         agent_stats=deepcopy(run.agent_stats),
-                        refs=deepcopy(run.refs),
                     ),
                 }
             )
@@ -1001,7 +942,6 @@ class ChatService:
                 "content": build_bot_history_content(
                     deepcopy(run.message_parts),
                     agent_stats=deepcopy(run.agent_stats),
-                    refs=deepcopy(run.refs),
                 ),
             }
         snapshot_revision = run.revision
@@ -1081,43 +1021,24 @@ class ChatService:
         pending_accumulator = BotMessageAccumulator()
         display_accumulator = BotMessageAccumulator()
         pending_agent_stats = {}
-        pending_refs = {}
 
         async def flush_pending_bot_message():
-            nonlocal pending_accumulator, pending_agent_stats, pending_refs
-            if not (
-                pending_accumulator.has_content() or pending_refs or pending_agent_stats
-            ):
+            nonlocal pending_accumulator, pending_agent_stats
+            if not (pending_accumulator.has_content() or pending_agent_stats):
                 return None
 
             message_parts_to_save = pending_accumulator.build_message_parts(
                 include_pending_tool_calls=True
             )
-            plain_text = collect_plain_text_from_message_parts(message_parts_to_save)
-            try:
-                extracted_refs = extract_web_search_refs(
-                    plain_text,
-                    message_parts_to_save,
-                )
-            except Exception as exc:
-                logger.exception(
-                    f"Failed to extract web search refs: {exc}",
-                    exc_info=True,
-                )
-                extracted_refs = pending_refs
-
-            run.refs = extracted_refs
             saved_record = await self.save_bot_message(
                 run.session_id,
                 message_parts_to_save,
                 pending_agent_stats,
-                extracted_refs,
                 run.llm_checkpoint_id,
                 run.platform_history_id,
             )
             pending_accumulator = BotMessageAccumulator()
             pending_agent_stats = {}
-            pending_refs = {}
             return saved_record
 
         self.running_convs[run.session_id] = True
@@ -1193,9 +1114,7 @@ class ChatService:
                 should_save = False
                 if msg_type == "end":
                     should_save = bool(
-                        pending_accumulator.has_content()
-                        or pending_refs
-                        or pending_agent_stats
+                        pending_accumulator.has_content() or pending_agent_stats
                     )
                 elif (streaming and msg_type == "complete") or not streaming:
                     if chain_type not in ("tool_call", "tool_call_result"):

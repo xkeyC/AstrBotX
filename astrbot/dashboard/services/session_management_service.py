@@ -17,7 +17,6 @@ AVAILABLE_SESSION_RULE_KEYS = [
     "session_service_config",
     "session_plugin_config",
     "kb_config",
-    f"provider_perf_{ProviderType.CHAT_COMPLETION.value}",
     f"provider_perf_{ProviderType.SPEECH_TO_TEXT.value}",
     f"provider_perf_{ProviderType.TEXT_TO_SPEECH.value}",
 ]
@@ -227,9 +226,6 @@ class SessionManagementService:
             "page": page,
             "page_size": page_size,
             "available_personas": available_personas,
-            "available_chat_providers": self._serialize_provider_insts(
-                getattr(provider_manager, "provider_insts", [])
-            ),
             "available_stt_providers": self._serialize_provider_insts(
                 getattr(provider_manager, "stt_provider_insts", [])
             ),
@@ -392,7 +388,6 @@ class SessionManagementService:
                 ):
                     continue
 
-            chat_provider_key = f"provider_perf_{ProviderType.CHAT_COMPLETION.value}"
             tts_provider_key = f"provider_perf_{ProviderType.TEXT_TO_SPEECH.value}"
             stt_provider_key = f"provider_perf_{ProviderType.SPEECH_TO_TEXT.value}"
 
@@ -404,7 +399,6 @@ class SessionManagementService:
                     "llm_enabled": llm_enabled,
                     "tts_enabled": tts_enabled,
                     "has_rules": umo in umo_rules,
-                    "chat_provider": rules.get(chat_provider_key),
                     "tts_provider": rules.get(tts_provider_key),
                     "stt_provider": rules.get(stt_provider_key),
                 }
@@ -423,9 +417,6 @@ class SessionManagementService:
             "page": page,
             "page_size": page_size,
             "platforms": platforms,
-            "available_chat_providers": self._serialize_provider_insts(
-                getattr(provider_manager, "provider_insts", [])
-            ),
             "available_tts_providers": self._serialize_provider_insts(
                 getattr(provider_manager, "tts_provider_insts", [])
             ),
@@ -506,7 +497,6 @@ class SessionManagementService:
             )
 
         provider_type_map = {
-            "chat_completion": ProviderType.CHAT_COMPLETION,
             "text_to_speech": ProviderType.TEXT_TO_SPEECH,
             "speech_to_text": ProviderType.SPEECH_TO_TEXT,
         }

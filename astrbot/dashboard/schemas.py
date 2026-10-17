@@ -192,13 +192,6 @@ class CommandPermissionRequest(BaseModel):
     permission: str
 
 
-class SubAgentConfigRequest(OpenModel):
-    main_enable: bool | None = None
-    enable: bool | None = None
-    remove_main_duplicate_tools: bool | None = None
-    agents: list[dict[str, Any]] | None = None
-
-
 class TraceSettingsRequest(BaseModel):
     trace_enable: bool | None = None
 
@@ -660,7 +653,6 @@ class BatchSessionProviderRequest(UmoListRequest):
     provider_id: str | None = None
     provider_type: (
         Literal[
-            "chat_completion",
             "speech_to_text",
             "text_to_speech",
         ]

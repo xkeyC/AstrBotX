@@ -12,7 +12,6 @@
     "logs": "Logs",
     "trace": "Trace"
   },
-  "subagent": "SubAgents",
   "codex": "Codex",
   "permissions": "Permissions",
   "toolUse": "MCP Tools",

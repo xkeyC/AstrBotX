@@ -70,21 +70,10 @@
     "enable": "AI を有効化",
     "more": "その他の操作",
     "changeRunner": "実行方式を変更",
-    "localSettingsTitle": "AstrBot 組み込み AI",
     "settingsSuffix": "設定",
-    "tabs": {
-      "model": "モデル",
-      "persona": "ペルソナ",
-      "capabilities": "機能",
-      "advanced": "詳細設定"
-    },
     "groups": {
-      "model": "モデル",
-      "modelHint": "組み込み AI で使用する会話モデルと再試行ポリシーを選択します。",
-      "execution": "実行設定",
-      "executionHint": "ツール呼び出しループと実行プロセスを設定します。",
-      "media": "画像と音声",
-      "mediaHint": "画像認識、音声認識、音声合成を設定します。",
+      "media": "音声",
+      "mediaHint": "音声認識と音声合成を設定します。",
       "behavior": "メッセージ処理",
       "behaviorHint": "これらの設定は、現在の設定ファイル内のすべての実行方式に適用されます。"
     },
@@ -105,11 +94,6 @@
       "confirm": "この方式を使用"
     },
     "runners": {
-      "local": {
-        "title": "組み込み AI",
-        "summary": "モデル、ペルソナ、ナレッジベース、ツールなど、AstrBot の AI 機能を設定します。",
-        "description": "モデル、ペルソナ、ナレッジベース、ツールに対応した AstrBot 組み込み AI を使用します。"
-      },
       "dify": {
         "title": "Dify",
         "summary": "現在、AI 会話は Dify アプリケーションによって処理されています。",

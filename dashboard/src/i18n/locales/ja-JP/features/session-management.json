@@ -24,7 +24,7 @@
     "serviceConfig": "サービス設定",
     "pluginConfig": "プラグイン設定",
     "kbConfig": "ナレッジベース設定",
-    "providerConfig": "モデル設定",
+    "providerConfig": "音声モデル",
     "configured": "設定済み",
     "noCustomName": "メモ未設定"
   },
@@ -64,8 +64,7 @@
       "customName": "メッセージ送信元の表示名"
     },
     "providerConfig": {
-      "title": "モデル設定",
-      "chatProvider": "チャットモデル",
+      "title": "音声モデル設定（STT / TTS）",
       "sttProvider": "音声認識モデル",
       "ttsProvider": "音声合成モデル"
     },
@@ -82,8 +81,7 @@
     "kbConfig": {
       "title": "ナレッジベース設定",
       "selectKbs": "ナレッジベースを選択",
-      "topK": "返す結果の件数（Top K）",
-      "enableRerank": "リランキングを有効化"
+      "topK": "返す結果の件数（Top K）"
     }
   },
   "deleteConfirm": {
@@ -104,7 +102,6 @@
     "scopePrivate": "すべての個別チャット",
     "llmStatus": "LLM ステータス",
     "ttsStatus": "TTS ステータス",
-    "chatProvider": "チャットモデル",
     "ttsProvider": "TTS モデル",
     "apply": "変更を適用"
   },

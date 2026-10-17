@@ -10,6 +10,7 @@
     "providerType": "Provider Type",
     "tabs": {
       "all": "All",
+      "localInfra": "Local service",
       "chatCompletion": "Chat Completion",
       "speechToText": "Speech to Text",
       "textToSpeech": "Text to Speech",
@@ -176,5 +177,113 @@
       "providerId": "Provider ID",
       "modelId": "Model ID"
     }
+  },
+  "localInfra": {
+    "title": "Local multimodal service (local-multimodal-infra)",
+    "subtitle": "AstrBot's first-tier local service: speech recognition, speech synthesis, embeddings, rerank, content moderation and realtime voice are set up here; plugins call the same server through Context.get_local_infra().",
+    "refresh": "Refresh models",
+    "save": "Save",
+    "connection": "Connection",
+    "enable": "Enable the local multimodal service",
+    "enableHint": "When off, AstrBot uses none of its services and plugins get no client.",
+    "baseUrl": "Server address",
+    "baseUrlHint": "The server's HTTP address (without /v1), e.g. http://127.0.0.1:17890. Realtime voice uses ws://…/v1/realtime.",
+    "token": "Inference token",
+    "tokenHint": "One of the server's LOCAL_MCP_INFER_TOKENS, if it has any; sent as Authorization: Bearer.",
+    "timeout": "Request timeout (s)",
+    "timeoutHint": "How long one request may take (synthesizing a long text can be slow).",
+    "probe": "Test connection",
+    "statusOff": "The local multimodal service is off.",
+    "statusError": "Cannot list models: {error}. Switched-on services keep trying as configured.",
+    "statusOld": "The server is too old to list task kinds, so models cannot be matched; it picks the model for each service.",
+    "statusOk": "Connected: {usable} / {total} models usable.",
+    "services": "Services AstrBot uses",
+    "servicesHint": "Each service is on by default and uses the server's first enabled model of its kind, unless you pick one or switch it off. Speech recognition, speech synthesis, embeddings and rerank appear as providers local_infra/… wherever a provider is chosen.",
+    "service": {
+      "stt": {
+        "name": "Speech recognition",
+        "hint": "Provider local_infra/stt, selectable in the speech-to-text settings."
+      },
+      "tts": {
+        "name": "Speech synthesis",
+        "hint": "Provider local_infra/tts, selectable in the text-to-speech settings."
+      },
+      "embedding": {
+        "name": "Embeddings",
+        "hint": "Provider local_infra/embedding, for knowledge bases. An automatically selected model is saved as the current choice and is not switched when the server enables another embedding model later, keeping the knowledge base vector space consistent."
+      },
+      "rerank": {
+        "name": "Rerank",
+        "hint": "Provider local_infra/rerank, for knowledge base retrieval."
+      },
+      "moderation": {
+        "name": "Content moderation",
+        "hint": "Checks messages before they go to cloud models; each platform chooses on, text only or off in its settings."
+      },
+      "realtime_voice": {
+        "name": "Realtime voice",
+        "hint": "Used when the Codex page's realtime voice runs on the local backend."
+      }
+    },
+    "model": "Model",
+    "serverPicks": "The server uses its enabled moderation models",
+    "autoModel": "Auto ({model})",
+    "autoModelNone": "Auto (none on the server)",
+    "unavailableModel": "{model} (unavailable)",
+    "state": {
+      "off": "Off",
+      "on": "Available",
+      "using": "Using {model}",
+      "unknown": "Unknown (no model list)",
+      "no_model": "No usable model on the server",
+      "model_unavailable": "Chosen model unavailable"
+    },
+    "refAudio": "Reference audio",
+    "refAudioHint": "The voice to clone (WAV, relative to the data directory or absolute); empty: the model's default voice.",
+    "refText": "Reference transcript",
+    "refTextHint": "What the reference audio says (helps Qwen3-TTS clone the voice); optional.",
+    "moderation": {
+      "blockedReply": "Blocked reply",
+      "blockedReplyHint": "What the bot replies to a blocked message. Empty: the built-in reply.",
+      "threshold": "Text threshold",
+      "thresholdHint": "A text is flagged when 1 - p(safe) exceeds this (0 to below 1, default 0.9). Lower is stricter.",
+      "nsfwThreshold": "Image threshold",
+      "nsfwThresholdHint": "An image is flagged when its NSFW probability exceeds this (0 to below 1, default 0.5). Lower is stricter.",
+      "nsfwLabels": "Image NSFW levels",
+      "nsfwLabelsHint": "Which classifier levels count as NSFW; none selected: the server's setting.",
+      "nsfw": {
+        "low": "Suggestive (swimwear, lingerie)",
+        "medium": "Medium",
+        "high": "Explicit"
+      },
+      "categories": "Text categories",
+      "categoriesHint": "Text (also text read from images) is blocked only for the selected categories; none selected means all.",
+      "category": {
+        "violent": "Violent",
+        "illegal": "Non-violent illegal acts",
+        "sexual": "Sexual",
+        "pii": "Privacy (PII)",
+        "self-harm": "Self-harm",
+        "unethical": "Unethical",
+        "political": "Politically sensitive",
+        "copyright": "Copyright",
+        "jailbreak": "Jailbreak"
+      }
+    },
+    "models": "Models on the server",
+    "modelsHint": "From the server's /v1/models; models are enabled and downloaded on the server.",
+    "noModels": "No model information (service off or unreachable).",
+    "modelId": "Model",
+    "taskKinds": "Task kinds",
+    "modelState": "State",
+    "usedBy": "Used by AstrBot",
+    "modelDisabled": "Disabled",
+    "modelMissing": "Files missing",
+    "modelReady": "Ready",
+    "loadFailed": "Cannot load the local multimodal service settings",
+    "saved": "Saved",
+    "saveFailed": "Saving failed",
+    "probeOk": "Connected; the server has {count} models",
+    "probeFailed": "Connection failed"
   }
 }

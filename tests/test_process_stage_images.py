@@ -118,7 +118,6 @@ def harness(tmp_path, monkeypatch):
         return_value=(None, None, None, False)
     )
     context.persona_manager.personas_v3 = []
-    context.subagent_orchestrator = None
     context.get_llm_tool_manager.return_value.get_builtin_tool.side_effect = (
         lambda cls, **kwargs: cls(**kwargs)
     )

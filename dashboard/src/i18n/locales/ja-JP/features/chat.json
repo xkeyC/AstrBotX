@@ -77,7 +77,6 @@
     "fullscreen": "全画面モード",
     "exitFullscreen": "全画面を終了",
     "reply": "引用して返信",
-    "providerConfig": "モデル設定",
     "toolsUsed": "使用したツール",
     "toolCallUsed": "{name} ツールを使用しました",
     "pythonCodeAnalysis": "Python コード分析を使用しました"

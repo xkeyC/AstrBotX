@@ -24,7 +24,7 @@
         "serviceConfig": "Сервис",
         "pluginConfig": "Плагины",
         "kbConfig": "База знаний",
-        "providerConfig": "Модель",
+        "providerConfig": "Голосовые модели",
         "configured": "Настроено",
         "noCustomName": "Без заметки"
     },
@@ -64,8 +64,7 @@
             "customName": "Заметка для сессии"
         },
         "providerConfig": {
-            "title": "Выбор моделей",
-            "chatProvider": "Чат-модель",
+            "title": "Голосовые модели (STT / TTS)",
             "sttProvider": "STT (Распознавание)",
             "ttsProvider": "TTS (Озвучка)"
         },
@@ -82,8 +81,7 @@
         "kbConfig": {
             "title": "База знаний",
             "selectKbs": "Выбор баз знаний",
-            "topK": "Количество результатов (Top K)",
-            "enableRerank": "Использовать Rerank"
+            "topK": "Количество результатов (Top K)"
         }
     },
     "deleteConfirm": {
@@ -104,7 +102,6 @@
         "scopePrivate": "Личные диалоги",
         "llmStatus": "Статус LLM",
         "ttsStatus": "Статус TTS",
-        "chatProvider": "Чат-модель",
         "ttsProvider": "TTS-модель",
         "apply": "Применить"
     },

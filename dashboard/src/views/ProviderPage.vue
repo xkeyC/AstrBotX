@@ -24,7 +24,10 @@
       </div>
 
       <div class="provider-content">
-        <div class="provider-workbench">
+        <div v-if="selectedProviderType === 'local_infra'" class="provider-workbench provider-workbench--single">
+          <LocalInfraPanel />
+        </div>
+        <div v-else class="provider-workbench">
           <div class="provider-workbench__sidebar">
             <ProviderSourcesPanel
               :displayed-provider-sources="selectedProviderType === 'chat_completion'
@@ -304,6 +307,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { providerApi } from '@/api/v1'
 import { useModuleI18n } from '@/i18n/composables'
 import AstrBotConfig from '@/components/shared/AstrBotConfig.vue'
+import LocalInfraPanel from '@/components/provider/LocalInfraPanel.vue'
 import ProviderModelsPanel from '@/components/provider/ProviderModelsPanel.vue'
 import ProviderSourceSubtitle from '@/components/provider/ProviderSourceSubtitle.vue'
 import ProviderSourcesPanel from '@/components/provider/ProviderSourcesPanel.vue'
@@ -313,7 +317,7 @@ import { useProviderSources } from '@/composables/useProviderSources'
 const props = defineProps({
   defaultTab: {
     type: String,
-    default: 'chat_completion'
+    default: 'local_infra'
   }
 })
 
@@ -738,6 +742,11 @@ async function testSingleProvider(provider) {
   width: 100%;
 }
 
+.provider-workbench--single {
+  display: flex;
+  flex-direction: column;
+}
+
 .provider-workbench__sidebar,
 .provider-workbench__main {
   min-height: 0;
@@ -843,7 +852,7 @@ async function testSingleProvider(provider) {
 }
 
 @media (max-width: 960px) {
-  .provider-workbench {
+  .provider-workbench:not(.provider-workbench--single) {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1px minmax(0, 1fr);
   }

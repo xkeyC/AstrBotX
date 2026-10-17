@@ -1827,6 +1827,13 @@ class ProviderConfigService:
         seen_ids = set()
         for item in provider_type.split(","):
             providers = self.list_providers(capability=item)["providers"]
+            # The providers the local-multimodal-infra setting created.
+            wanted_type = self._resolve_provider_type(item)
+            providers += [
+                copy.deepcopy(config)
+                for config in self.provider_manager.local_infra_configs.values()
+                if config.get("provider_type") == wanted_type
+            ]
             for provider in providers:
                 provider_id = provider.get("id")
                 if provider_id in seen_ids:

@@ -5,7 +5,7 @@ model cannot `cat` a SKILL.md. Skills are listed in the prompt the way Codex
 lists its own (the format and trigger rules its models are trained on) and
 read on demand through the ``astrbot_read_skill`` tool, which only opens files
 inside the directory of a skill offered to the current event -- on this host,
-or in the sandbox when skills live there (shipyard mode).
+or in the sandbox when skills live there (the sandbox runtime).
 
 A skill the user names outright is not left to the model: its SKILL.md is
 loaded into that turn, as Codex does for an explicit ``$skill`` mention.
@@ -64,7 +64,7 @@ def build_codex_skills_prompt(
     Args:
         skills: Skills offered to the current event.
         in_sandbox: Whether skills are read from the sandbox copy instead of
-            this host, which is what shipyard mode does.
+            this host, which is what the sandbox runtime does.
 
     Returns:
         Prompt text listing each skill and how to use it.

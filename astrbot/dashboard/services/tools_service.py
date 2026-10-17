@@ -290,13 +290,6 @@ class ToolsService:
                 if tool.name not in existing_names:
                     tools.append(tool)
                     existing_names.add(tool.name)
-            subagent_orchestrator = getattr(
-                self.core_lifecycle, "subagent_orchestrator", None
-            )
-            for tool in getattr(subagent_orchestrator, "handoffs", []) or []:
-                if tool.name not in existing_names:
-                    tools.append(tool)
-                    existing_names.add(tool.name)
 
             config_entries = self._get_config_entries()
             perms_store = (

@@ -30,8 +30,6 @@ export type RealtimeVoiceForm = {
   backend: string
   voice: string
   model: string
-  infra_url: string
-  infra_token: string
   ref_audio: string
   ref_text: string
   emotion: string
@@ -166,8 +164,6 @@ export function realtimeVoiceFromConfig(v: any): RealtimeVoiceForm {
     backend: str(v?.backend) === 'local_infra' ? 'local_infra' : 'builtin',
     voice: str(v?.voice),
     model: str(v?.model),
-    infra_url: str(v?.infra_url) || 'ws://127.0.0.1:17890/v1/realtime',
-    infra_token: str(v?.infra_token),
     ref_audio: str(v?.ref_audio),
     ref_text: str(v?.ref_text),
     emotion: str(v?.emotion) || 'calm',
@@ -185,8 +181,6 @@ export function realtimeVoicePayload(v: RealtimeVoiceForm) {
     backend: v.backend,
     voice: v.voice || '',
     model: (v.model || '').trim(),
-    infra_url: (v.infra_url || '').trim(),
-    infra_token: (v.infra_token || '').trim(),
     ref_audio: (v.ref_audio || '').trim(),
     ref_text: (v.ref_text || '').trim(),
     emotion: v.emotion || 'calm',
@@ -243,7 +237,6 @@ export function extrasProblem(e: ProviderExtras): [string, Record<string, string
 /** A problem of the realtime voice settings (an i18n key and its params), or null. */
 export function realtimeVoiceProblem(v: RealtimeVoiceForm): [string, Record<string, string>] | null {
   if (v.backend !== 'local_infra') return null
-  if (!/^wss?:\/\/[^/\s]+/.test((v.infra_url || '').trim())) return ['messages.voiceUrlInvalid', {}]
   const strength = Number(v.emotion_strength)
   if (blank(v.emotion_strength) || !(strength >= 0 && strength <= 1)) {
     return ['messages.voiceStrengthInvalid', {}]

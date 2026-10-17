@@ -877,8 +877,6 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
 
     def _computer_runtime(self) -> str:
         """Execution environment this chat's tools run in, as codex_request sets it."""
-        if self.cfg.get("shipyard_mode"):
-            return "sandbox"
         try:
             ctx = self.run_context.context.context  # type: ignore[attr-defined]
             settings = ctx.get_config(umo=self.umo).get("provider_settings") or {}

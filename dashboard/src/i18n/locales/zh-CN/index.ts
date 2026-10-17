@@ -31,7 +31,6 @@ import zhCNKnowledgeBaseDetail from './features/knowledge-base/detail.json';
 import zhCNKnowledgeBaseDocument from './features/knowledge-base/document.json';
 import zhCNPersona from './features/persona.json';
 import zhCNCommand from './features/command.json';
-import zhCNSubagent from './features/subagent.json';
 import zhCNCodex from './features/codex.json';
 import zhCNPermissions from './features/permissions.json';
 import zhCNWelcome from './features/welcome.json';
@@ -79,7 +78,6 @@ export default {
       },
       persona: zhCNPersona,
       command: zhCNCommand,
-      subagent: zhCNSubagent,
       codex: zhCNCodex,
       permissions: zhCNPermissions,
       welcome: zhCNWelcome

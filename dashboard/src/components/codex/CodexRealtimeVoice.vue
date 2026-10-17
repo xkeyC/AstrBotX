@@ -30,28 +30,11 @@
 
     <template v-else>
       <div class="text-subtitle-2 mb-2">{{ tm('voice.serverTitle') }}</div>
+      <div class="voice-hint mb-4">
+        {{ tm('voice.infraServerHint') }}
+        <router-link to="/providers">{{ tm('voice.infraServerLink') }}</router-link>
+      </div>
       <div class="voice-grid mb-4">
-        <v-text-field
-          v-model="voice.infra_url"
-          :label="tm('voice.infraUrl')"
-          :hint="tm('voice.infraUrlHint')"
-          persistent-hint
-          placeholder="ws://127.0.0.1:17890/v1/realtime"
-          variant="outlined"
-          density="comfortable"
-        />
-        <v-text-field
-          v-model="voice.infra_token"
-          :label="tm('voice.infraToken')"
-          :hint="tm('voice.infraTokenHint')"
-          persistent-hint
-          :type="showToken ? 'text' : 'password'"
-          :append-inner-icon="showToken ? 'mdi-eye-off' : 'mdi-eye'"
-          autocomplete="off"
-          variant="outlined"
-          density="comfortable"
-          @click:append-inner="showToken = !showToken"
-        />
         <v-text-field
           v-model="voice.ref_audio"
           :label="tm('voice.refAudio')"
@@ -152,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useModuleI18n } from '@/i18n/composables'
 import { EMOTIONS, REALTIME_VOICES, REASONING_EFFORTS, type RealtimeVoiceForm } from './types'
 
@@ -165,7 +148,6 @@ const props = defineProps<{
 // The page owns these settings; they are edited in place.
 const voice = computed(() => props.modelValue)
 const { tm } = useModuleI18n('features/codex')
-const showToken = ref(false)
 
 const voiceItems = computed(() => [
   { title: tm('voice.voiceDefault'), value: '' },

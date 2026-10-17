@@ -29,6 +29,10 @@ interface ProviderIconSource {
 export function resolveDefaultTab(value?: string) {
   const normalized = (value || '').toLowerCase()
 
+  if (normalized === 'local_infra') {
+    return 'local_infra'
+  }
+
   if (normalized === 'select_provider_stt' || normalized === 'speech_to_text' || normalized.includes('stt')) {
     return 'speech_to_text'
   }
@@ -84,7 +88,8 @@ export function useProviderSources(options: UseProviderSourcesOptions) {
   const unsavedProviderSourceMarker = Symbol('unsavedProviderSource')
 
   const providerTypes = computed(() => [
-    { value: 'chat_completion', label: tm('providers.tabs.chatCompletion'), icon: 'mdi-message-text' },
+    // Chat models are Codex's (Codex page); the local service comes first.
+    { value: 'local_infra', label: tm('providers.tabs.localInfra'), icon: 'mdi-server-network' },
     { value: 'speech_to_text', label: tm('providers.tabs.speechToText'), icon: 'mdi-microphone-message' },
     { value: 'text_to_speech', label: tm('providers.tabs.textToSpeech'), icon: 'mdi-volume-high' },
     { value: 'embedding', label: tm('providers.tabs.embedding'), icon: 'mdi-code-json' },

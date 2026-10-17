@@ -754,15 +754,15 @@ class KBHelper:
             ValueError: 如果 URL 为空或无法提取内容
             IOError: 如果网络请求失败
         """
-        # 获取 Tavily API 密钥
+        # 获取知识库网页导入用的 Tavily API 密钥
         config = self.prov_mgr.acm.default_conf
-        tavily_keys = config.get("provider_settings", {}).get(
-            "websearch_tavily_key", []
-        )
+        tavily_keys = [
+            key.strip()
+            for key in config.get("kb_tavily_key") or []
+            if isinstance(key, str) and key.strip()
+        ]
         if not tavily_keys:
-            raise ValueError(
-                "Error: Tavily API key is not configured in provider_settings."
-            )
+            raise ValueError("Error: Tavily API key (kb_tavily_key) is not configured.")
 
         # 阶段1: 从 URL 提取内容
         if progress_callback:

@@ -32,6 +32,7 @@ from astrbot.dashboard.services.cron_service import CronService
 from astrbot.dashboard.services.file_service import FileService
 from astrbot.dashboard.services.knowledge_base_service import KnowledgeBaseService
 from astrbot.dashboard.services.live_chat_service import LiveChatService
+from astrbot.dashboard.services.local_infra_service import LocalInfraService
 from astrbot.dashboard.services.log_service import LogService
 from astrbot.dashboard.services.open_api_service import OpenApiService
 from astrbot.dashboard.services.persona_service import PersonaService
@@ -43,7 +44,6 @@ from astrbot.dashboard.services.session_management_service import (
 )
 from astrbot.dashboard.services.skills_service import SkillsService
 from astrbot.dashboard.services.stat_service import StatService
-from astrbot.dashboard.services.subagent_service import SubAgentService
 from astrbot.dashboard.services.t2i_service import T2iService
 from astrbot.dashboard.services.tools_service import ToolsService
 from astrbot.dashboard.services.update_service import (
@@ -66,6 +66,7 @@ from .extensions import legacy_router as legacy_extensions_router
 from .files import legacy_router as legacy_files_router
 from .knowledge_bases import legacy_router as legacy_knowledge_bases_router
 from .live_chat import legacy_router as legacy_live_chat_router
+from .local_infra import legacy_router as legacy_local_infra_router
 from .logs import legacy_router as legacy_logs_router
 from .personas import legacy_router as legacy_personas_router
 from .platform import legacy_router as legacy_platform_router
@@ -76,7 +77,6 @@ from .sessions import legacy_router as legacy_sessions_router
 from .skills import legacy_router as legacy_skills_router
 from .static_files import router as static_files_router
 from .stats import legacy_router as legacy_stats_router
-from .subagents import legacy_router as legacy_subagents_router
 from .t2i import legacy_router as legacy_t2i_router
 from .tools import legacy_router as legacy_tools_router
 from .updates import legacy_router as legacy_updates_router
@@ -129,6 +129,7 @@ def create_dashboard_asgi_app(
         files=FileService(),
         knowledge_bases=KnowledgeBaseService(core_lifecycle),
         live_chat=LiveChatService(db, core_lifecycle),
+        local_infra=LocalInfraService(core_lifecycle),
         logs=LogService(log_broker, core_lifecycle.astrbot_config),
         bots=BotConfigService(core_lifecycle),
         platforms=PlatformService(core_lifecycle),
@@ -143,7 +144,6 @@ def create_dashboard_asgi_app(
         sessions=SessionManagementService(core_lifecycle, db),
         skills=SkillsService(core_lifecycle),
         stats=stats,
-        subagents=SubAgentService(core_lifecycle),
         t2i=T2iService(core_lifecycle),
         tools=ToolsService(core_lifecycle),
         updates=UpdateService(
@@ -203,6 +203,7 @@ def create_dashboard_asgi_app(
     app.include_router(legacy_chat_router)
     app.include_router(legacy_chat_projects_router)
     app.include_router(legacy_codex_router)
+    app.include_router(legacy_local_infra_router)
     app.include_router(legacy_conversations_router)
     app.include_router(legacy_cron_router)
     app.include_router(legacy_extensions_router)
@@ -213,7 +214,6 @@ def create_dashboard_asgi_app(
     app.include_router(legacy_sessions_router)
     app.include_router(legacy_skills_router)
     app.include_router(legacy_stats_router)
-    app.include_router(legacy_subagents_router)
     app.include_router(legacy_tools_router)
     app.include_router(legacy_platform_router)
     app.include_router(legacy_plugins_router)

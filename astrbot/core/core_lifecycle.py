@@ -34,7 +34,6 @@ from astrbot.core.provider.manager import ProviderManager
 from astrbot.core.star.context import Context
 from astrbot.core.star.star_handler import EventType, star_handlers_registry, star_map
 from astrbot.core.star.star_manager import PluginManager
-from astrbot.core.subagent_orchestrator import SubAgentOrchestrator
 from astrbot.core.umop_config_router import UmopConfigRouter
 from astrbot.core.updater import AstrBotUpdater
 from astrbot.core.utils.event_loop_diagnostics import (
@@ -61,10 +60,8 @@ class AstrBotCoreLifecycle:
         self.astrbot_config = astrbot_config  # 初始化配置
         self.db = db  # 初始化数据库
 
-        self.subagent_orchestrator: SubAgentOrchestrator | None = None
         self.cron_manager: CronJobManager | None = None
         self.temp_dir_cleaner: TempDirCleaner | None = None
-        self._default_chat_provider_warning_emitted = False
 
         # 设置代理
         proxy_config = self.astrbot_config.get("http_proxy", "")
@@ -95,64 +92,6 @@ class AstrBotCoreLifecycle:
             # Always bypass proxies for loopback addresses used by local APIs.
             os.environ["no_proxy"] = "localhost,127.0.0.1,::1"
             logger.debug("HTTP proxy cleared, no_proxy set to localhost")
-
-    async def _init_or_reload_subagent_orchestrator(self) -> None:
-        """Create (if needed) and reload the subagent orchestrator from config.
-
-        This keeps lifecycle wiring in one place while allowing the orchestrator
-        to manage enable/disable and tool registration details.
-        """
-        try:
-            if self.subagent_orchestrator is None:
-                self.subagent_orchestrator = SubAgentOrchestrator(
-                    self.provider_manager.llm_tools,
-                    self.persona_mgr,
-                )
-            await self.subagent_orchestrator.reload_from_config(
-                self.astrbot_config.get("subagent_orchestrator", {}),
-            )
-        except Exception as e:
-            logger.error(f"Subagent orchestrator init failed: {e}", exc_info=True)
-
-    def _warn_about_unset_default_chat_provider(self) -> None:
-        if self._default_chat_provider_warning_emitted:
-            return
-
-        pm = getattr(self, "provider_manager", None)
-        if not pm:
-            return
-
-        providers = pm.provider_insts
-        if len(providers) == 0:
-            return
-
-        default_id = getattr(pm, "default_chat_provider_id", "")
-        fallback = pm.curr_provider_inst or providers[0]
-        fallback_id = fallback.provider_config.get("id") or "unknown"
-
-        if not default_id:
-            if len(providers) <= 1:
-                return
-            self._default_chat_provider_warning_emitted = True
-            logger.warning(
-                "Detected %d enabled chat providers but `agent_runner.config.model.provider_id` is empty. "
-                "AstrBot will use `%s` as the startup fallback chat provider. "
-                "Set a default chat model in the WebUI configuration page to avoid unexpected provider switching.",
-                len(providers),
-                fallback_id,
-            )
-            return
-
-        found = any((p.provider_config.get("id") == default_id) for p in providers)
-        if not found:
-            self._default_chat_provider_warning_emitted = True
-            logger.warning(
-                "Configured Agent Runner model provider ID `%s` does not match an enabled provider. "
-                "AstrBot will use `%s` as the fallback chat provider. "
-                "Please check the WebUI configuration page.",
-                default_id,
-                fallback_id,
-            )
 
     async def initialize(self) -> None:
         """初始化 AstrBot 核心生命周期管理类.
@@ -235,9 +174,6 @@ class AstrBotCoreLifecycle:
         # 初始化 CronJob 管理器
         self.cron_manager = CronJobManager(self.db)
 
-        # Dynamic subagents (handoff tools) from config.
-        await self._init_or_reload_subagent_orchestrator()
-
         # 初始化提供给插件的上下文
         self.star_context = Context(
             self.event_queue,
@@ -251,7 +187,6 @@ class AstrBotCoreLifecycle:
             self.astrbot_config_mgr,
             self.kb_manager,
             self.cron_manager,
-            self.subagent_orchestrator,
         )
         self.star_context.html_renderer = html_renderer
 
@@ -262,9 +197,7 @@ class AstrBotCoreLifecycle:
         await self.plugin_manager.reload()
 
         # 根据配置实例化各个 Provider
-        self._default_chat_provider_warning_emitted = False
         await self.provider_manager.initialize()
-        self._warn_about_unset_default_chat_provider()
 
         await self.kb_manager.initialize()
 

@@ -28,7 +28,6 @@ from astrbot.dashboard.services.auth_service import (
 )
 from astrbot.dashboard.services.chat_service import (
     BotMessageAccumulator,
-    collect_plain_text_from_message_parts,
 )
 
 SendJson = Callable[[dict], Awaitable[None]]
@@ -44,9 +43,8 @@ class OpenApiServiceError(Exception):
 class OpenApiWebSocketChatBridge:
     build_user_message_parts: Callable[[object], Awaitable[list]]
     create_attachment_from_file: Callable[[str, str], Awaitable[Any]]
-    extract_web_search_refs: Callable[[str, list], dict]
     insert_user_message: Callable[[str, str, list], Awaitable[None]]
-    save_bot_message: Callable[[str, list, dict, dict], Awaitable[Any]]
+    save_bot_message: Callable[[str, list, dict], Awaitable[Any]]
 
 
 class OpenApiService:
@@ -454,7 +452,6 @@ class OpenApiService:
 
             message_accumulator = BotMessageAccumulator()
             agent_stats = {}
-            refs = {}
             while True:
                 try:
                     result = await asyncio.wait_for(back_queue.get(), timeout=1)
@@ -503,9 +500,7 @@ class OpenApiService:
 
                 should_save = False
                 if msg_type == "end":
-                    should_save = bool(
-                        message_accumulator.has_content() or refs or agent_stats
-                    )
+                    should_save = bool(message_accumulator.has_content() or agent_stats)
                 elif (streaming and msg_type == "complete") or not streaming:
                     if chain_type not in ("tool_call", "tool_call_result"):
                         should_save = True
@@ -514,25 +509,10 @@ class OpenApiService:
                     message_parts_to_save = message_accumulator.build_message_parts(
                         include_pending_tool_calls=True
                     )
-                    plain_text = collect_plain_text_from_message_parts(
-                        message_parts_to_save
-                    )
-                    try:
-                        refs = chat_bridge.extract_web_search_refs(
-                            plain_text,
-                            message_parts_to_save,
-                        )
-                    except Exception as exc:
-                        logger.exception(
-                            f"Open API WS failed to extract web search refs: {exc}",
-                            exc_info=True,
-                        )
-
                     saved_record = await chat_bridge.save_bot_message(
                         session_id,
                         message_parts_to_save,
                         agent_stats,
-                        refs,
                     )
                     if saved_record:
                         await send_json(
@@ -549,7 +529,6 @@ class OpenApiService:
                         )
                     message_accumulator = BotMessageAccumulator()
                     agent_stats = {}
-                    refs = {}
                 if msg_type == "end":
                     break
         except Exception as exc:

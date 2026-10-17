@@ -102,7 +102,7 @@ class PreProcessStage(Stage):
     ) -> None | AsyncGenerator[None, None]:
         """在处理事件之前的预处理"""
         # 平台特异配置：platform_specific.<platform>.pre_ack_emoji
-        supported = {"telegram", "lark", "discord"}
+        supported = {"telegram", "lark", "discord", "aiocqhttp"}
         platform = event.get_platform_name()
         cfg = (
             self.config.get("platform_specific", {})
@@ -120,7 +120,7 @@ class PreProcessStage(Stage):
                 await event.react(random.choice(emojis))
             except Exception as e:
                 logger.warning(
-                    f"Failed to send a pre-response reaction on {platform}: {e}"
+                    f"Failed to send a pre-response reaction on {platform}: {e!r}"
                 )
 
         # 路径映射

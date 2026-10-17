@@ -1,4 +1,4 @@
-/* Auto-generated MDI subset – 267 icons */
+/* Auto-generated MDI subset – 270 icons */
 /* Do not edit manually. Run: pnpm run subset-icons */
 
 @font-face {
@@ -22,6 +22,10 @@
 
 .mdi-account::before {
   content: "\F0004";
+}
+
+.mdi-account-alert-outline::before {
+  content: "\F0B50";
 }
 
 .mdi-account-edit::before {
@@ -156,6 +160,10 @@
   content: "\F00F3";
 }
 
+.mdi-cancel::before {
+  content: "\F073A";
+}
+
 .mdi-chat::before {
   content: "\F0B79";
 }
@@ -254,6 +262,10 @@
 
 .mdi-cloud-upload::before {
   content: "\F0167";
+}
+
+.mdi-code-braces-box::before {
+  content: "\F10D6";
 }
 
 .mdi-code-json::before {
@@ -696,10 +708,6 @@
   content: "\F0365";
 }
 
-.mdi-message-text::before {
-  content: "\F0369";
-}
-
 .mdi-microphone::before {
   content: "\F036C";
 }
@@ -792,6 +800,10 @@
   content: "\F0DEB";
 }
 
+.mdi-phone-in-talk::before {
+  content: "\F03F6";
+}
+
 .mdi-pin::before {
   content: "\F0403";
 }
@@ -872,10 +884,6 @@
   content: "\F06A9";
 }
 
-.mdi-robot-off::before {
-  content: "\F16A7";
-}
-
 .mdi-robot-off-outline::before {
   content: "\F167B";
 }
@@ -902,6 +910,10 @@
 
 .mdi-server-off::before {
   content: "\F048F";
+}
+
+.mdi-shield-account-outline::before {
+  content: "\F0A12";
 }
 
 .mdi-shield-check::before {

@@ -7,9 +7,10 @@ from typing import Any
 logger = logging.getLogger("astrbot")
 
 DEFAULT_AGENT_RUNNER_TYPE = "codex"
-# "local" is kept only so internal code paths (tool_loop_agent, persona helpers)
-# and their tests keep working; it is no longer selectable and
-# ``normalize_agent_runner`` migrates it to Codex.
+# "local" is kept only so the unreachable local agent code paths (the internal
+# pipeline stage, tool_loop_agent and their tests) keep working; it is no longer
+# selectable, has no settings in the WebUI, and ``normalize_agent_runner``
+# migrates it to Codex.
 AGENT_RUNNER_TYPES = ("codex", "local")
 SELECTABLE_AGENT_RUNNER_TYPES = ("codex",)
 THIRD_PARTY_AGENT_RUNNER_TYPES = ("codex",)
@@ -51,9 +52,6 @@ AGENT_RUNNER_CONFIG_DEFAULTS: dict[str, dict[str, Any]] = {
         "tool_mode": "code_mode_only",
         "code_mode_host": "",
         "exec_as_function_tool": False,
-        # Every agent file operation happens in the Shipyard Neo sandbox;
-        # Codex only orchestrates and never touches this host's files.
-        "shipyard_mode": False,
         "web_search": False,
         # Proxy for all of Codex's traffic, including realtime voice:
         # socks5://, socks5h:// or http:// (credentials may be embedded).
@@ -81,6 +79,9 @@ AGENT_RUNNER_CONFIG_DEFAULTS: dict[str, dict[str, Any]] = {
         "memory_enabled": False,
         "memory_auto_consolidate": True,
         "show_commentary": False,
+        # The persona a conversation uses when it has none of its own (a
+        # sender's permission rule or the session's override still wins).
+        "persona_id": "default",
         "safety_mode": False,
         "sync_history": True,
         "tool_call_timeout": 120,
@@ -91,16 +92,14 @@ AGENT_RUNNER_CONFIG_DEFAULTS: dict[str, dict[str, Any]] = {
         "max_queued_turns": 5,
         # Realtime voice (Mumble, QQ calls). "builtin": Codex realtime, an
         # OpenAI realtime model (a ChatGPT subscription with voice).
-        # "local_infra": a local-multimodal-infra server listens and speaks,
-        # and a model of the providers above (text_*) does the talking.
+        # "local_infra": the local-multimodal-infra server (the local_infra
+        # system setting) listens and speaks, and a model of the providers
+        # above (text_*) does the talking.
         "realtime_voice": {
             "backend": "builtin",
             # builtin: voice and realtime model (empty: Codex's defaults).
             "voice": "",
             "model": "",
-            # local_infra: the server's realtime WebSocket and token.
-            "infra_url": "ws://127.0.0.1:17890/v1/realtime",
-            "infra_token": "",
             # A WAV file the bot speaks like (relative to the data directory;
             # empty: the server's default voice), what it says (Qwen3-TTS
             # then clones the voice in context), and the emotion it speaks
@@ -230,7 +229,8 @@ def normalize_agent_runner(agent_runner: object) -> dict[str, Any]:
     Codex is the only supported Agent Runner. Any other value (legacy runner
     types such as ``local``, ``dify``, ``coze``, ``dashscope`` or ``deerflow``,
     unknown or missing types, or a non-object root) is migrated to Codex with
-    its default configuration, logging a warning once per type.
+    its default configuration, logging a warning once per type; only the local
+    runner's default persona is kept.
 
     Args:
         agent_runner: Untrusted root Agent Runner configuration.
@@ -243,10 +243,19 @@ def normalize_agent_runner(agent_runner: object) -> dict[str, Any]:
     runner_type = agent_runner.get("runner_type")
     if runner_type not in SELECTABLE_AGENT_RUNNER_TYPES:
         _warn_runner_migration(runner_type)
-        return {
-            "runner_type": DEFAULT_AGENT_RUNNER_TYPE,
-            "config": get_agent_runner_config_default(DEFAULT_AGENT_RUNNER_TYPE),
-        }
+        migrated = get_agent_runner_config_default(DEFAULT_AGENT_RUNNER_TYPE)
+        # The local runner's default persona carries over to Codex.
+        old_config = agent_runner.get("config")
+        old_persona = (
+            old_config.get("persona") if isinstance(old_config, dict) else None
+        )
+        if isinstance(old_persona, dict) and isinstance(
+            old_persona.get("persona_id"), str
+        ):
+            migrated["persona_id"] = old_persona["persona_id"] or "default"
+        if isinstance(old_persona, dict) and old_persona.get("safety_mode") is True:
+            migrated["safety_mode"] = True
+        return {"runner_type": DEFAULT_AGENT_RUNNER_TYPE, "config": migrated}
     config = agent_runner.get("config", {})
     default = AGENT_RUNNER_CONFIG_DEFAULTS[runner_type]
     normalized = _normalize_value(config, default)

@@ -176,7 +176,24 @@ class FakeSp:
         self.values[kwargs["key"]] = kwargs["value"]
 
 
+INFRA = {
+    "enable": True,
+    "base_url": "http://127.0.0.1:17890",
+    "token": "secret",
+    # Moderation has tests of its own below.
+    "services": {"moderation": {"enable": False}},
+}
+
+
+@pytest.fixture(autouse=True)
+def infra_server(monkeypatch):
+    """The local-multimodal-infra server the voice sessions connect to."""
+    monkeypatch.setitem(voice.astrbot_config, "local_infra", dict(INFRA))
+
+
 def runner_config(**voice_settings) -> dict:
+    """The runner's settings; ``realtime_voice`` as the sessions see it (with
+    the server's URL and token from ``local_infra``)."""
     config = get_agent_runner_config_default("codex")
     config["realtime_voice"].update(
         {
@@ -616,8 +633,8 @@ def test_a_transcribed_reference_must_be_short(tmp_path):
 
 @pytest.mark.asyncio
 async def test_bad_settings_fail_the_start(engine, monkeypatch):
-    monkeypatch.setattr(
-        voice, "_runner_config", lambda: runner_config(infra_url="http://x")
+    monkeypatch.setitem(
+        voice.astrbot_config, "local_infra", {**INFRA, "base_url": "ftp://x"}
     )
     t = await open_session(engine, started=False)
     await eventually(lambda: t.failures)
@@ -1399,11 +1416,17 @@ async def test_the_voice_server_checks_what_it_hears_as_the_platform_says(
     from astrbot.core import content_moderation as cm
 
     config = {
-        "content_moderation_url": "http://127.0.0.1:17890",
-        "content_moderation_threshold": 0.8,
-        "content_moderation_nsfw_threshold": 0.4,
-        "content_moderation_categories": ["violent", "pii"],
-        "content_moderation_blocked_reply": "不行。",
+        "local_infra": {
+            **INFRA,
+            "services": {
+                "moderation": {
+                    "threshold": 0.8,
+                    "nsfw_threshold": 0.4,
+                    "categories": ["violent", "pii"],
+                    "blocked_reply": "不行。",
+                }
+            },
+        },
         "platform": [{"id": "test", "content_moderation": "text_only"}],
     }
     monkeypatch.setattr(cm, "astrbot_config", config)
@@ -1434,7 +1457,7 @@ async def test_a_platform_with_moderation_off_has_the_server_check_nothing(
         cm,
         "astrbot_config",
         {
-            "content_moderation_url": "http://127.0.0.1:17890",
+            "local_infra": INFRA,
             "platform": [{"id": "test", "content_moderation": "disabled"}],
         },
     )

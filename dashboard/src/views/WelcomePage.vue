@@ -20,16 +20,16 @@
             </div>
 
             <v-timeline align="start" side="end" density="compact" class="welcome-timeline" truncate-line="both">
-              <v-timeline-item :dot-color="providerStepState === 'completed' ? 'success' : 'primary'"
+              <v-timeline-item :dot-color="codexStepState === 'completed' ? 'success' : 'primary'"
                 icon="mdi-numeric-1" fill-dot size="small">
                 <div class="pl-2">
                   <div class="text-h6 font-weight-bold mb-1">{{ tm('onboard.step1Title') }}</div>
                   <p class="text-body-2 text-medium-emphasis mb-3">{{ tm('onboard.step1Desc') }}</p>
                   <div class="d-flex align-center">
-                    <v-btn color="primary" variant="flat" rounded="pill" class="px-6" @click="openProviderDialog">
+                    <v-btn color="primary" variant="flat" rounded="pill" class="px-6" to="/codex">
                       {{ tm('onboard.configure') }}
                     </v-btn>
-                    <div v-if="providerStepState === 'completed'"
+                    <div v-if="codexStepState === 'completed'"
                       class="text-success d-flex align-center text-body-2 font-weight-medium ml-3">
                       {{ tm('onboard.completed') }}
                     </div>
@@ -167,7 +167,6 @@
 
     <AddNewPlatform v-model:show="showAddPlatformDialog" :metadata="platformMetadata" :config_data="platformConfigData"
       @refresh-config="loadPlatformConfigBase" />
-    <ProviderConfigDialog v-model="showProviderDialog" />
     <v-dialog v-model="showComputerAccessHelpDialog" max-width="640">
       <v-card>
         <v-card-title class="text-h3 pa-4 pb-0 pl-6">
@@ -195,32 +194,30 @@
 import { computed, ref, watch, onMounted } from 'vue';
 import axios from 'axios';
 import AddNewPlatform from '@/components/platform/AddNewPlatform.vue';
-import ProviderConfigDialog from '@/components/chat/ProviderConfigDialog.vue';
-import { configProfileApi, providerApi, systemConfigApi } from '@/api/v1';
+import { httpClient } from '@/api/http';
+import { configProfileApi, systemConfigApi } from '@/api/v1';
 import { useI18n, useModuleI18n } from '@/i18n/composables';
 import { useToast } from '@/utils/toast';
 import { MarkdownRender } from 'markstream-vue';
 import 'markstream-vue/index.css';
 
 type StepState = 'pending' | 'completed' | 'skipped';
-type ComputerAccessRuntime = 'local' | 'none';
+type ComputerAccessRuntime = 'local' | 'sandbox' | 'none';
 
 const { tm } = useModuleI18n('features/welcome');
 const { locale } = useI18n();
 const { success: showSuccess, error: showError } = useToast();
 
 const showAddPlatformDialog = ref(false);
-const showProviderDialog = ref(false);
 const showComputerAccessHelpDialog = ref(false);
 const loadingPlatformDialog = ref(false);
 
 const platformMetadata = ref<Record<string, any>>({});
 const platformConfigData = ref<Record<string, any>>({});
 const platformCountBeforeOpen = ref(0);
-const providerCountBeforeOpen = ref(0);
 
 const platformStepState = ref<StepState>('pending');
-const providerStepState = ref<StepState>('pending');
+const codexStepState = ref<StepState>('pending');
 const computerAccessStepState = ref<StepState>('pending');
 const computerAccessRuntime = ref<ComputerAccessRuntime>('none');
 const savedComputerAccessRuntime = ref<ComputerAccessRuntime>('none');
@@ -340,66 +337,9 @@ async function fetchDefaultConfig() {
   return (res.data?.data as any)?.config || {};
 }
 
-function getChatProvidersFromTemplatePayload(payload: any) {
-  const providers = payload?.providers || [];
-  const sources = payload?.provider_sources || [];
-  const sourceMap = new Map();
-  sources.forEach((s: any) => sourceMap.set(s.id, s.provider_type));
-
-  return providers.filter((provider: any) => {
-    if (provider.provider_type) {
-      return provider.provider_type === 'chat_completion';
-    }
-    if (provider.provider_source_id) {
-      const type = sourceMap.get(provider.provider_source_id);
-      if (type === 'chat_completion') return true;
-    }
-    return String(provider.type || '').includes('chat_completion');
-  });
-}
-
-async function fetchChatProviders() {
-  const response = await providerApi.schema();
-  if (response.data.status !== 'ok') {
-    throw new Error(response.data.message || tm('onboard.providerLoadFailed'));
-  }
-  return getChatProvidersFromTemplatePayload(response.data.data);
-}
-
-function pickDefaultProviderId(providers: any[]) {
-  if (!providers.length) return '';
-  const enabledProvider = providers.find((provider) => provider.enable !== false);
-  return (enabledProvider || providers[0]).id || '';
-}
-
-async function syncDefaultConfigProviderIfNeeded() {
-  const providers = await fetchChatProviders();
-  if (!providers.length) return;
-
-  const targetProviderId = pickDefaultProviderId(providers);
-  if (!targetProviderId) return;
-
-  const configData = await fetchDefaultConfig();
-  if (configData?.agent_runner?.runner_type !== 'local') {
-    return;
-  }
-  const modelConfig = configData.agent_runner.config?.model;
-  if (!modelConfig) return;
-
-  if (modelConfig.provider_id === targetProviderId) return;
-
-  modelConfig.provider_id = targetProviderId;
-
-  const updateRes = await configProfileApi.update('default', configData);
-  if (updateRes.data.status !== 'ok') {
-    throw new Error(updateRes.data.message || tm('onboard.providerUpdateFailed'));
-  }
-
-  showSuccess(tm('onboard.providerDefaultUpdated', { id: targetProviderId }));
-}
-
 function normalizeComputerAccessRuntime(runtime: unknown): ComputerAccessRuntime {
-  return runtime === 'local' || runtime === 'sandbox' ? 'local' : 'none';
+  // The runtime is the one execution switch: keep a sandbox choice as is.
+  return runtime === 'local' || runtime === 'sandbox' ? runtime : 'none';
 }
 
 function syncComputerAccessRuntime(configData: any) {
@@ -417,6 +357,7 @@ function syncComputerAccessRuntime(configData: any) {
 
 const computerAccessOptions = computed(() => [
   { title: tm('onboard.step3Allow'), value: 'local' },
+  { title: tm('onboard.step3Sandbox'), value: 'sandbox' },
   { title: tm('onboard.step3Deny'), value: 'none' }
 ]);
 
@@ -439,7 +380,7 @@ async function saveComputerAccessRuntime() {
     computerAccessStepState.value = 'completed';
     showSuccess(
       tm(
-        computerAccessRuntime.value === 'local'
+        computerAccessRuntime.value !== 'none'
           ? 'onboard.computerAccessAllowed'
           : 'onboard.computerAccessDenied'
       )
@@ -473,18 +414,23 @@ onMounted(async () => {
     console.error(e);
   }
 
+  // The agent's model is Codex's: done once Codex is signed in or has a
+  // custom model provider.
   try {
-    const providers = await fetchChatProviders();
-    if (providers.length > 0) {
-      providerStepState.value = 'completed';
+    const defaultConfig = await fetchDefaultConfig();
+    syncComputerAccessRuntime(defaultConfig);
+    if ((defaultConfig?.agent_runner?.config?.model_providers || []).length > 0) {
+      codexStepState.value = 'completed';
     }
   } catch (e) {
     console.error(e);
   }
 
   try {
-    const defaultConfig = await fetchDefaultConfig();
-    syncComputerAccessRuntime(defaultConfig);
+    const res = await httpClient.get('/api/codex/account');
+    if (res.data?.status === 'ok' && res.data.data?.logged_in) {
+      codexStepState.value = 'completed';
+    }
   } catch (e) {
     console.error(e);
   }
@@ -503,16 +449,6 @@ async function openPlatformDialog() {
   }
 }
 
-async function openProviderDialog() {
-  try {
-    const providers = await fetchChatProviders();
-    providerCountBeforeOpen.value = providers.length;
-    showProviderDialog.value = true;
-  } catch (err: any) {
-    showError(err?.response?.data?.message || err?.message || tm('onboard.providerLoadFailed'));
-  }
-}
-
 watch(showAddPlatformDialog, async (visible, wasVisible) => {
   if (!wasVisible || visible) return;
   try {
@@ -523,19 +459,6 @@ watch(showAddPlatformDialog, async (visible, wasVisible) => {
     }
   } catch (err: any) {
     showError(err?.response?.data?.message || err?.message || tm('onboard.platformLoadFailed'));
-  }
-});
-
-watch(showProviderDialog, async (visible, wasVisible) => {
-  if (!wasVisible || visible) return;
-  try {
-    const providers = await fetchChatProviders();
-    if (providers.length > providerCountBeforeOpen.value) {
-      providerStepState.value = 'completed';
-      await syncDefaultConfigProviderIfNeeded();
-    }
-  } catch (err: any) {
-    showError(err?.response?.data?.message || err?.message || tm('onboard.providerUpdateFailed'));
   }
 });
 

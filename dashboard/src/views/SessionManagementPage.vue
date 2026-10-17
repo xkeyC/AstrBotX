@@ -169,11 +169,12 @@
             </v-col>
             <v-col cols="12" md="6" lg="3">
               <v-select
-                v-model="batchChatProvider"
-                :items="batchChatProviderOptions"
+                v-model="batchTtsProvider"
+                :items="batchTtsProviderOptions"
                 item-title="label"
                 item-value="value"
-                :label="tm('batchOperations.chatProvider')"
+                :label="tm('batchOperations.ttsProvider')"
+                :disabled="availableTtsProviders.length === 0"
                 hide-details
                 clearable
                 variant="solo-filled"
@@ -456,18 +457,6 @@
               <v-row dense>
                 <v-col cols="12">
                   <v-select
-                    v-model="providerConfig.chat_completion"
-                    :items="chatProviderOptions"
-                    item-title="label"
-                    item-value="value"
-                    :label="tm('ruleEditor.providerConfig.chatProvider')"
-                    variant="outlined"
-                    hide-details
-                    class="mb-2"
-                  />
-                </v-col>
-                <v-col cols="12">
-                  <v-select
                     v-model="providerConfig.speech_to_text"
                     :items="sttProviderOptions"
                     item-title="label"
@@ -595,9 +584,6 @@
                 <v-col cols="12" md="6">
                   <v-text-field v-model.number="kbConfig.top_k" :label="tm('ruleEditor.kbConfig.topK')" variant="outlined" hide-details type="number" min="1" max="20" class="mt-3" />
                 </v-col>
-                <v-col cols="12" md="6">
-                  <v-checkbox v-model="kbConfig.enable_rerank" :label="tm('ruleEditor.kbConfig.enableRerank')" color="primary" hide-details class="mt-3" />
-                </v-col>
               </v-row>
 
               <div class="d-flex justify-end mt-4">
@@ -715,7 +701,6 @@ export default {
 
       // 可用选项
       availablePersonas: [],
-      availableChatProviders: [],
       availableSttProviders: [],
       availableTtsProviders: [],
       availablePlugins: [],
@@ -743,7 +728,6 @@ export default {
 
       // Provider 配置
       providerConfig: {
-        chat_completion: FOLLOW_CONFIG_VALUE,
         speech_to_text: FOLLOW_CONFIG_VALUE,
         text_to_speech: FOLLOW_CONFIG_VALUE,
       },
@@ -758,7 +742,6 @@ export default {
       kbConfig: {
         kb_ids: [],
         top_k: 5,
-        enable_rerank: true,
       },
 
       // 删除确认
@@ -778,7 +761,6 @@ export default {
       batchGroupId: null,
       batchLlmStatus: null,
       batchTtsStatus: null,
-      batchChatProvider: null,
       batchTtsProvider: null,
       batchUpdating: false,
 
@@ -843,16 +825,6 @@ export default {
       ]
     },
 
-    chatProviderOptions() {
-      return [
-        { label: this.tm('provider.followConfig'), value: FOLLOW_CONFIG_VALUE },
-        ...this.availableChatProviders.map((p) => ({
-          label: `${p.name} (${p.model})`,
-          value: p.id,
-        })),
-      ]
-    },
-
     sttProviderOptions() {
       return [
         { label: this.tm('provider.followConfig'), value: FOLLOW_CONFIG_VALUE },
@@ -867,16 +839,6 @@ export default {
       return [
         { label: this.tm('provider.followConfig'), value: FOLLOW_CONFIG_VALUE },
         ...this.availableTtsProviders.map((p) => ({
-          label: `${p.name} (${p.model})`,
-          value: p.id,
-        })),
-      ]
-    },
-
-    batchChatProviderOptions() {
-      return [
-        { label: this.tm('provider.followConfig'), value: FOLLOW_CONFIG_VALUE },
-        ...this.availableChatProviders.map((p) => ({
           label: `${p.name} (${p.model})`,
           value: p.id,
         })),
@@ -951,7 +913,7 @@ export default {
     },
 
     canApplyBatch() {
-      const hasChanges = this.batchLlmStatus !== null || this.batchTtsStatus !== null || this.batchChatProvider !== null || this.batchTtsProvider !== null
+      const hasChanges = this.batchLlmStatus !== null || this.batchTtsStatus !== null || this.batchTtsProvider !== null
       if (this.batchScope === 'selected') {
         return hasChanges && this.selectedItems.length > 0
       }
@@ -1019,7 +981,6 @@ export default {
           this.mergeUmoInfos(data.rules)
           this.totalItems = data.total
           this.availablePersonas = data.available_personas
-          this.availableChatProviders = data.available_chat_providers
           this.availableSttProviders = data.available_stt_providers
           this.availableTtsProviders = data.available_tts_providers
           this.availablePlugins = data.available_plugins || []
@@ -1068,7 +1029,7 @@ export default {
     },
 
     hasProviderConfig(rules) {
-      return rules && (rules['provider_perf_chat_completion'] || rules['provider_perf_speech_to_text'] || rules['provider_perf_text_to_speech'])
+      return rules && (rules['provider_perf_speech_to_text'] || rules['provider_perf_text_to_speech'])
     },
 
     parseUmoInfo(umo) {
@@ -1191,7 +1152,6 @@ export default {
 
       // 初始化 Provider 配置
       this.providerConfig = {
-        chat_completion: this.editingRules['provider_perf_chat_completion'] || FOLLOW_CONFIG_VALUE,
         speech_to_text: this.editingRules['provider_perf_speech_to_text'] || FOLLOW_CONFIG_VALUE,
         text_to_speech: this.editingRules['provider_perf_text_to_speech'] || FOLLOW_CONFIG_VALUE,
       }
@@ -1208,7 +1168,6 @@ export default {
       this.kbConfig = {
         kb_ids: kbCfg.kb_ids || [],
         top_k: kbCfg.top_k ?? 5,
-        enable_rerank: kbCfg.enable_rerank !== false,
       }
 
       this.ruleDialog = true
@@ -1268,7 +1227,7 @@ export default {
       try {
         const updateTasks = []
         const deleteTasks = []
-        const providerTypes = ['chat_completion', 'speech_to_text', 'text_to_speech']
+        const providerTypes = ['speech_to_text', 'text_to_speech']
 
         for (const type of providerTypes) {
           const value = this.providerConfig[type]
@@ -1384,7 +1343,6 @@ export default {
         const config = {
           kb_ids: this.kbConfig.kb_ids,
           top_k: this.kbConfig.top_k,
-          enable_rerank: this.kbConfig.enable_rerank,
         }
 
         // 如果 kb_ids 为空，删除配置
@@ -1589,6 +1547,8 @@ export default {
             this.batchUpdating = false
             return
           }
+          // The API takes the selected sessions as umos, with no scope.
+          scope = null
         }
 
         const tasks = []
@@ -1602,29 +1562,6 @@ export default {
             serviceData.tts_enabled = this.batchTtsStatus
           }
           tasks.push(sessionApi.batchUpdateService(serviceData))
-        }
-
-        if (this.batchChatProvider !== null) {
-          if (this.batchChatProvider === FOLLOW_CONFIG_VALUE) {
-            tasks.push(
-              sessionApi.deleteRules({
-                scope,
-                umos,
-                group_id: groupId,
-                rule_key: 'provider_perf_chat_completion',
-              }),
-            )
-          } else {
-            tasks.push(
-              sessionApi.batchUpdateProvider({
-                scope,
-                umos,
-                group_id: groupId,
-                provider_type: 'chat_completion',
-                provider_id: this.batchChatProvider,
-              }),
-            )
-          }
         }
 
         if (this.batchTtsProvider !== null) {
@@ -1663,7 +1600,6 @@ export default {
           this.showSuccess(this.tm('messages.batchUpdateSuccess'))
           this.batchLlmStatus = null
           this.batchTtsStatus = null
-          this.batchChatProvider = null
           this.batchTtsProvider = null
           await this.loadData()
         } else {

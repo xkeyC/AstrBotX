@@ -121,7 +121,7 @@
                 <v-alert :type="tavilyConfigStatus === 'error' ? 'error' : 'info'" variant="tonal" density="compact">
                   <div class="d-flex align-center justify-space-between">
                     <span>
-                      {{ tavilyConfigStatus === 'error' ? '检查网页搜索配置失败' : '使用此功能需要配置 Tavily Key' }}
+                      {{ tavilyConfigStatus === 'error' ? '检查 Tavily Key 配置失败' : '使用此功能需要配置 Tavily Key' }}
                     </span>
                     <v-btn size="small" variant="tonal" @click="showTavilyDialog = true">
                       配置
@@ -791,8 +791,8 @@ const checkTavilyConfig = async () => {
     const response = await configProfileApi.get('default')
     if (response.data.status === 'ok') {
       const config = ((response.data.data as any).config || {}) as any
-      const tavilyKeys = config?.provider_settings?.websearch_tavily_key
-      if (Array.isArray(tavilyKeys) && tavilyKeys.length > 0 && tavilyKeys.some(key => key.trim() !== '')) {
+      const tavilyKeys = config?.kb_tavily_key
+      if (Array.isArray(tavilyKeys) && tavilyKeys.some(key => typeof key === 'string' && key.trim() !== '')) {
         tavilyConfigStatus.value = 'configured'
       } else {
         tavilyConfigStatus.value = 'not_configured'

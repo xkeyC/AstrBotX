@@ -57,11 +57,8 @@
   "dialogs": {
     "view": {
       "title": "会話詳細",
-      "editMode": "会話を編集",
-      "previewMode": "プレビューモード",
-      "saveChanges": "変更を保存",
       "close": "閉じる",
-      "confirmClose": "保存していない変更があります。閉じてもよろしいですか？"
+      "mirrorNotice": "これは AstrBot が保存している会話記録のミラーで、閲覧専用です。Codex は実際のコンテキストを自身のスレッドに保持しており、この記録は読み込みません。"
     },
     "edit": {
       "title": "会話情報を編集",
@@ -92,9 +89,6 @@
     "deleteSuccess": "削除しました",
     "deleteError": "削除に失敗しました",
     "historyError": "会話履歴の取得に失敗しました",
-    "historySaveSuccess": "会話履歴を保存しました",
-    "historySaveError": "会話履歴の保存に失敗しました",
-    "invalidJson": "JSON 形式が無効です",
     "noItemSelected": "削除する会話を先に選択してください",
     "batchDeleteSuccess": "{count} 件の会話を削除しました",
     "batchDeleteError": "一括削除に失敗しました",

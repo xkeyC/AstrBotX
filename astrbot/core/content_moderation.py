@@ -1,9 +1,10 @@
 """Content moderation of what is sent to cloud models.
 
-Calls an OpenAI-compatible ``POST /v1/moderations`` service (the local one of
-local-multimodal-infra) set by the system setting ``content_moderation_url``;
-an empty setting turns moderation off. Each platform instance chooses how its
-messages are checked with its ``content_moderation`` setting:
+Calls ``POST /v1/moderations`` of the local-multimodal-infra server
+(``local_infra``, its ``moderation`` service); moderation is off while the
+server or the service is off, or the server has no moderation model. Each
+platform instance chooses how its messages are checked with its
+``content_moderation`` setting:
 
 - ``enabled``: text and images;
 - ``text_only``: text only, images go unchecked;
@@ -21,12 +22,14 @@ from collections.abc import Sequence
 import aiohttp
 
 from astrbot.core import astrbot_config, logger
+from astrbot.core.local_infra.catalog import catalog
+from astrbot.core.local_infra.config import http_base, local_infra_settings
 
 MODE_ENABLED = "enabled"
 MODE_TEXT_ONLY = "text_only"
 MODE_DISABLED = "disabled"
 #: Replied instead of an answer when the message was blocked, unless the
-#: system setting content_moderation_blocked_reply says otherwise.
+#: moderation service's ``blocked_reply`` says otherwise.
 BLOCKED_REPLY = "这条内容无法处理。"
 
 TEXT_TIMEOUT_S = 5.0
@@ -130,45 +133,49 @@ def _pieces(text: str, max_bytes: int) -> list[str]:
     return pieces
 
 
+def _settings() -> dict:
+    return local_infra_settings(astrbot_config)
+
+
+def _options() -> dict:
+    return _settings()["services"]["moderation"]
+
+
 def blocked_reply() -> str:
-    """What a blocked message is answered with (the system setting, or
-    ``BLOCKED_REPLY`` when it is empty)."""
-    reply = str(astrbot_config.get("content_moderation_blocked_reply") or "").strip()
+    """What a blocked message is answered with (the service's
+    ``blocked_reply``, or ``BLOCKED_REPLY`` when it is empty)."""
+    reply = str(_options().get("blocked_reply") or "").strip()
     return reply or BLOCKED_REPLY
 
 
 def service_url() -> str:
     """The moderation service's ``/v1/moderations`` endpoint, or "" when off."""
-    base = str(astrbot_config.get("content_moderation_url") or "").strip()
-    if not base:
+    settings = _settings()
+    if not catalog.resolve("moderation", settings)["available"]:
         return ""
-    base = base.rstrip("/")
-    return base if base.endswith("/v1/moderations") else f"{base}/v1/moderations"
+    return f"{http_base(settings)}/v1/moderations"
 
 
 def check_options() -> dict:
-    """What the system settings tell the service about flagging.
+    """What the moderation service's options tell the server about flagging.
 
-    ``content_moderation_threshold``: a text is flagged when
-    ``1 - p(safe)`` exceeds it (the service's default 0.9; lower is
-    stricter). ``content_moderation_nsfw_threshold``: an image is flagged
-    when its NSFW probability exceeds it (default 0.5; lower is stricter).
-    A value the service would reject (outside 0 <= x < 1) is left out, so
-    the service's default applies. ``content_moderation_nsfw_labels``: the
-    image classifier's labels that count as NSFW (``low`` suggestive,
-    ``medium``, ``high`` explicit); none selected keeps the service's.
-    ``content_moderation_categories``: the text categories that flag (text
-    judged unsafe only for others passes); none selected means all.
+    ``threshold``: a text is flagged when ``1 - p(safe)`` exceeds it (the
+    server's default 0.9; lower is stricter). ``nsfw_threshold``: an image is
+    flagged when its NSFW probability exceeds it (default 0.5; lower is
+    stricter). A value the server would reject (outside 0 <= x < 1) is left
+    out, so its default applies. ``nsfw_labels``: the image classifier's
+    labels that count as NSFW (``low`` suggestive, ``medium``, ``high``
+    explicit); none selected keeps the server's. ``categories``: the text
+    categories that flag (text judged unsafe only for others passes); none
+    selected means all.
 
     Returns:
         The request fields to send.
     """
     fields: dict = {}
-    for setting, field in (
-        ("content_moderation_threshold", "threshold"),
-        ("content_moderation_nsfw_threshold", "nsfw_threshold"),
-    ):
-        value = astrbot_config.get(setting)
+    options = _options()
+    for field in ("threshold", "nsfw_threshold"):
+        value = options.get(field)
         if value is None or value == "":
             continue
         try:
@@ -179,13 +186,10 @@ def check_options() -> dict:
             fields[field] = number
         else:
             logger.warning(
-                "Ignoring %s=%r: it must be at least 0 and below 1.", setting, value
+                "Ignoring %s=%r: it must be at least 0 and below 1.", field, value
             )
-    for setting, field in (
-        ("content_moderation_nsfw_labels", "nsfw_labels"),
-        ("content_moderation_categories", "categories"),
-    ):
-        names = astrbot_config.get(setting)
+    for field in ("nsfw_labels", "categories"):
+        names = options.get(field)
         if isinstance(names, list):
             names = [str(name).strip() for name in names if str(name).strip()]
             if names:
@@ -292,8 +296,8 @@ async def _post(
 
     payload = {**payload, **check_options()}
 
-    # A service with inference tokens configured wants one.
-    token = str(astrbot_config.get("content_moderation_token") or "").strip()
+    # A server with inference tokens configured wants one.
+    token = _settings()["token"]
     headers = {"Authorization": f"Bearer {token}"} if token else None
 
     async def send() -> tuple[int, object]:

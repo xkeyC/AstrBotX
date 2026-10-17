@@ -34,10 +34,10 @@ export type BackupUploadSessionRequest = {
 
 export type BatchSessionProviderRequest = UmoListRequest & {
     provider_id: string;
-    provider_type: 'chat_completion' | 'speech_to_text' | 'text_to_speech';
+    provider_type: 'speech_to_text' | 'text_to_speech';
 };
 
-export type provider_type = 'chat_completion' | 'speech_to_text' | 'text_to_speech';
+export type provider_type = 'speech_to_text' | 'text_to_speech';
 
 export type BatchSessionServiceRequest = UmoListRequest & {
     session_enabled?: boolean;
@@ -3796,22 +3796,6 @@ export type DeleteT2iTemplateData = {
 export type DeleteT2iTemplateResponse = (SuccessEnvelope);
 
 export type DeleteT2iTemplateError = unknown;
-
-export type GetSubagentConfigResponse = (SuccessEnvelope);
-
-export type GetSubagentConfigError = unknown;
-
-export type UpdateSubagentConfigData = {
-    body: DynamicConfig;
-};
-
-export type UpdateSubagentConfigResponse = (SuccessEnvelope);
-
-export type UpdateSubagentConfigError = unknown;
-
-export type ListSubagentAvailableToolsResponse = (SuccessEnvelope);
-
-export type ListSubagentAvailableToolsError = unknown;
 
 export type VerifyPlatformWebhookData = {
     path: {

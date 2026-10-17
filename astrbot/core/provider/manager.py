@@ -89,6 +89,8 @@ class ProviderManager:
             Callable[[str, ProviderType, str | None], None]
         ] = []
         self._mcp_init_task: asyncio.Task | None = None
+        self.local_infra_configs: dict[str, dict] = {}
+        """Configs of the providers the local_infra setting created, by id."""
 
     def set_provider_change_callback(
         self,
@@ -370,6 +372,7 @@ class ProviderManager:
             except Exception as e:
                 logger.error(traceback.format_exc())
                 logger.error(e)
+        await self._start_local_infra()
 
         selected_provider_id = await sp.get_async(
             key="curr_provider",
@@ -607,6 +610,13 @@ class ProviderManager:
                 from .sources.nvidia_rerank_source import (
                     NvidiaRerankProvider as NvidiaRerankProvider,
                 )
+            case (
+                "local_infra_stt"
+                | "local_infra_tts"
+                | "local_infra_embedding"
+                | "local_infra_rerank"
+            ):
+                from .sources import local_infra_source as local_infra_source
             case "tei_rerank":
                 from .sources.tei_rerank_source import (
                     TEIRerankProvider as TEIRerankProvider,
@@ -647,6 +657,8 @@ class ProviderManager:
             provider_id: Provider id to resolve.
             merged: Whether to merge provider_source config into the provider config.
         """
+        if provider_id in self.local_infra_configs:
+            return copy.deepcopy(self.local_infra_configs[provider_id])
         for provider_config in self.providers_config:
             if provider_config.get("id") != provider_id:
                 continue
@@ -855,6 +867,7 @@ class ProviderManager:
             self.provider_sources_config = astrbot_config.get("provider_sources", [])
             config_ids = [provider["id"] for provider in self.providers_config]
             logger.info(f"providers in user's config: {config_ids}")
+            config_ids += list(self.local_infra_configs)
             for key in list(self.inst_map.keys()):
                 if key not in config_ids:
                     await self.terminate_provider(key)
@@ -890,6 +903,113 @@ class ProviderManager:
                     "as the current text-to-speech provider adapter.",
                 )
 
+    def _local_infra_provider_configs(self) -> dict[str, dict]:
+        """The providers the ``local_infra`` setting asks for, by id."""
+        from astrbot.core.local_infra.catalog import catalog
+        from astrbot.core.local_infra.config import (
+            PROVIDER_ID_PREFIX,
+            PROVIDER_SERVICES,
+            local_infra_settings,
+        )
+
+        settings = local_infra_settings()
+        configs = {}
+        for service, provider_type in PROVIDER_SERVICES.items():
+            state = catalog.resolve(service, settings)
+            if not state["available"]:
+                continue
+            provider_id = f"{PROVIDER_ID_PREFIX}{service}"
+            configs[provider_id] = {
+                "id": provider_id,
+                "type": f"local_infra_{service}",
+                "provider_type": provider_type,
+                "enable": True,
+                # Calls resolve the model themselves; a change of it still
+                # replaces the provider (an embedding model's size differs).
+                "model": state["model"] or state["chosen"],
+                "managed_by": "local_infra",
+            }
+        return configs
+
+    async def sync_local_infra(self) -> None:
+        """Creates, replaces or drops the ``local_infra/*`` providers so they
+        match the setting and the server's models."""
+        self._pin_local_infra_embedding_model()
+        wanted = self._local_infra_provider_configs()
+        async with self.reload_lock:
+            for provider_id in list(self.local_infra_configs):
+                if wanted.get(provider_id) != self.local_infra_configs[provider_id]:
+                    await self.terminate_provider(provider_id)
+                    del self.local_infra_configs[provider_id]
+            for provider_id, config in wanted.items():
+                if provider_id in self.local_infra_configs:
+                    continue
+                try:
+                    await self.load_provider(config)
+                except Exception as exc:
+                    logger.error("Cannot load %s: %s", provider_id, safe_error("", exc))
+                    continue
+                self.local_infra_configs[provider_id] = config
+            self._select_saved_local_infra_providers()
+
+    def _pin_local_infra_embedding_model(self) -> None:
+        """Store the embedding model the server picked as the chosen one.
+
+        Knowledge bases keep the vectors of one model, so the embedding
+        service must not follow the server's first enabled model to another
+        one later; other services keep following it.
+        """
+        from astrbot.core.local_infra.catalog import catalog
+        from astrbot.core.local_infra.config import CONFIG_KEY, local_infra_settings
+
+        acm = getattr(self, "acm", None)
+        if acm is None or not catalog.known:
+            return
+        config = acm.default_conf
+        state = catalog.resolve("embedding", local_infra_settings(config))
+        if not state["available"] or state["chosen"] or not state["model"]:
+            return
+        raw = config.get(CONFIG_KEY)
+        if not isinstance(raw, dict):
+            return
+        services = raw.setdefault("services", {})
+        services.setdefault("embedding", {})["model"] = state["model"]
+        config.save_config()
+        logger.info(
+            "local-infra embeddings use %s from now on (chosen automatically).",
+            state["model"],
+        )
+
+    def _select_saved_local_infra_providers(self) -> None:
+        """Re-select a ``local_infra`` STT/TTS provider chosen as default
+        once it (re)appears."""
+        for provider_id in self.local_infra_configs:
+            inst = self.inst_map.get(provider_id)
+            if (
+                isinstance(inst, STTProvider)
+                and self.provider_stt_settings.get("provider_id") == provider_id
+            ):
+                self.curr_stt_provider_inst = inst
+            if (
+                isinstance(inst, TTSProvider)
+                and self.provider_tts_settings.get("provider_id") == provider_id
+            ):
+                self.curr_tts_provider_inst = inst
+
+    async def _start_local_infra(self) -> None:
+        """Learns the server's models, creates its providers and keeps
+        them in step with later changes."""
+        from astrbot.core.local_infra.catalog import catalog
+
+        try:
+            await catalog.refresh()
+        except Exception:
+            logger.error("local-infra catalog refresh failed", exc_info=True)
+        await self.sync_local_infra()
+        if self.sync_local_infra not in catalog._listeners:
+            catalog.add_listener(self.sync_local_infra)
+        catalog.start()
+
     def get_insts(self):
         return self.provider_insts
 
@@ -913,6 +1033,11 @@ class ProviderManager:
                 prov_inst = self.inst_map[provider_id]
                 if isinstance(prov_inst, TTSProvider):
                     self.tts_provider_insts.remove(prov_inst)
+            prov_inst = self.inst_map[provider_id]
+            if prov_inst in self.embedding_provider_insts:
+                self.embedding_provider_insts.remove(prov_inst)  # type: ignore[arg-type]
+            if prov_inst in self.rerank_provider_insts:
+                self.rerank_provider_insts.remove(prov_inst)  # type: ignore[arg-type]
 
             if self.inst_map[provider_id] == self.curr_provider_inst:
                 self.curr_provider_inst = None
@@ -998,6 +1123,9 @@ class ProviderManager:
             self.providers_config = astrbot_config["provider"]
 
     async def terminate(self) -> None:
+        from astrbot.core.local_infra.catalog import catalog
+
+        await catalog.stop()
         if self._mcp_init_task and not self._mcp_init_task.done():
             self._mcp_init_task.cancel()
             try:

@@ -24,7 +24,7 @@
     "serviceConfig": "服务配置",
     "pluginConfig": "插件配置",
     "kbConfig": "知识库配置",
-    "providerConfig": "模型配置",
+    "providerConfig": "语音模型",
     "configured": "已配置",
     "noCustomName": "未设置备注"
   },
@@ -64,8 +64,7 @@
       "customName": "消息会话来源备注名称"
     },
     "providerConfig": {
-      "title": "模型配置",
-      "chatProvider": "聊天模型",
+      "title": "语音模型配置（STT / TTS）",
       "sttProvider": "语音识别模型",
       "ttsProvider": "语音合成模型"
     },
@@ -82,8 +81,7 @@
     "kbConfig": {
       "title": "知识库配置",
       "selectKbs": "选择知识库",
-      "topK": "返回结果数量 (Top K)",
-      "enableRerank": "启用重排序"
+      "topK": "返回结果数量 (Top K)"
     }
   },
   "deleteConfirm": {
@@ -104,7 +102,6 @@
     "scopePrivate": "所有私聊",
     "llmStatus": "LLM 状态",
     "ttsStatus": "TTS 状态",
-    "chatProvider": "聊天模型",
     "ttsProvider": "TTS 模型",
     "apply": "应用更改"
   },

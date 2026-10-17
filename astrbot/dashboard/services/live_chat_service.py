@@ -4,7 +4,6 @@ import asyncio
 import base64
 import json
 import os
-import re
 import time
 import uuid
 import wave
@@ -15,7 +14,6 @@ import jwt
 from starlette.websockets import WebSocketDisconnect
 
 from astrbot import logger
-from astrbot.core import sp
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
 from astrbot.core.platform.sources.webchat.message_parts_helper import (
     build_webchat_message_parts,
@@ -32,7 +30,6 @@ from astrbot.core.utils.datetime_utils import generate_timestamp_id, to_utc_isof
 from astrbot.dashboard.services.chat_service import (
     BotMessageAccumulator,
     build_bot_history_content,
-    collect_plain_text_from_message_parts,
 )
 
 SendJson = Callable[[dict], Awaitable[None]]
@@ -280,74 +277,16 @@ class LiveChatService:
             display_name=display_name,
         )
 
-    @staticmethod
-    def extract_web_search_refs(accumulated_text: str, accumulated_parts: list) -> dict:
-        supported = [
-            "web_search_baidu",
-            "web_search_tavily",
-            "web_search_bocha",
-            "web_search_brave",
-            "web_search_deepseek",
-            "web_search_serpapi",
-            "image_search_serpapi",
-            "finance_search_serpapi",
-            "scholar_search_serpapi",
-        ]
-        web_search_results = {}
-        tool_call_parts = [
-            p
-            for p in accumulated_parts
-            if p.get("type") == "tool_call" and p.get("tool_calls")
-        ]
-
-        for part in tool_call_parts:
-            for tool_call in part["tool_calls"]:
-                if tool_call.get("name") not in supported or not tool_call.get(
-                    "result"
-                ):
-                    continue
-                try:
-                    result_data = json.loads(tool_call["result"])
-                    for item in result_data.get("results", []):
-                        if idx := item.get("index"):
-                            web_search_results[idx] = {
-                                "url": item.get("url"),
-                                "title": item.get("title"),
-                                "snippet": item.get("snippet"),
-                            }
-                except (json.JSONDecodeError, KeyError):
-                    pass
-
-        if not web_search_results:
-            return {}
-
-        ref_indices = {
-            match.strip() for match in re.findall(r"<ref>(.*?)</ref>", accumulated_text)
-        }
-
-        used_refs = []
-        for ref_index in ref_indices:
-            if ref_index not in web_search_results:
-                continue
-            payload = {"index": ref_index, **web_search_results[ref_index]}
-            if favicon := sp.temporary_cache.get("_ws_favicon", {}).get(payload["url"]):
-                payload["favicon"] = favicon
-            used_refs.append(payload)
-
-        return {"used": used_refs} if used_refs else {}
-
     async def save_bot_message(
         self,
         webchat_conv_id: str,
         message_parts: list[dict],
         agent_stats: dict,
-        refs: dict,
         llm_checkpoint_id: str | None = None,
     ):
         new_his = build_bot_history_content(
             message_parts,
             agent_stats=agent_stats,
-            refs=refs,
         )
 
         return await self.platform_history_mgr.insert(
@@ -612,41 +551,23 @@ class LiveChatService:
 
             message_accumulator = BotMessageAccumulator()
             agent_stats = {}
-            refs = {}
 
             async def flush_pending_bot_message():
-                nonlocal message_accumulator, agent_stats, refs
-                if not (message_accumulator.has_content() or refs or agent_stats):
+                nonlocal message_accumulator, agent_stats
+                if not (message_accumulator.has_content() or agent_stats):
                     return None
 
                 message_parts_to_save = message_accumulator.build_message_parts(
                     include_pending_tool_calls=True
                 )
-                plain_text = collect_plain_text_from_message_parts(
-                    message_parts_to_save
-                )
-                try:
-                    extracted_refs = self.extract_web_search_refs(
-                        plain_text,
-                        message_parts_to_save,
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        f"[Live Chat] Failed to extract web search refs: {exc}",
-                        exc_info=True,
-                    )
-                    extracted_refs = refs
-
                 saved_record = await self.save_bot_message(
                     session_id,
                     message_parts_to_save,
                     agent_stats,
-                    extracted_refs,
                     llm_checkpoint_id,
                 )
                 message_accumulator = BotMessageAccumulator()
                 agent_stats = {}
-                refs = {}
                 return saved_record
 
             pending_bot_message_flusher = flush_pending_bot_message
@@ -753,9 +674,7 @@ class LiveChatService:
 
                 should_save = False
                 if result_type == "end":
-                    should_save = bool(
-                        message_accumulator.has_content() or refs or agent_stats
-                    )
+                    should_save = bool(message_accumulator.has_content() or agent_stats)
                 elif (streaming and result_type == "complete") or not streaming:
                     if chain_type not in (
                         "tool_call",

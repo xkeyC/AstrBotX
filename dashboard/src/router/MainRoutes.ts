@@ -246,11 +246,6 @@ const MainRoutes = {
       component: () => import('@/views/PermissionRulesPage.vue')
     },
     {
-      name: 'SubAgent',
-      path: '/subagent',
-      component: () => import('@/views/SubAgentPage.vue')
-    },
-    {
       name: 'CronJobs',
       path: '/cron',
       component: () => import('@/views/CronJobPage.vue')

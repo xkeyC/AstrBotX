@@ -30,13 +30,12 @@ def _bridge() -> OpenApiWebSocketChatBridge:
     async def insert_user_message(_session_id, _effective_username, _message_parts):
         pass
 
-    async def save_bot_message(_session_id, _message_parts, _agent_stats, _refs):
+    async def save_bot_message(_session_id, _message_parts, _agent_stats):
         return None
 
     return OpenApiWebSocketChatBridge(
         build_user_message_parts=build_user_message_parts,
         create_attachment_from_file=create_attachment_from_file,
-        extract_web_search_refs=lambda _text, _parts: {},
         insert_user_message=insert_user_message,
         save_bot_message=save_bot_message,
     )

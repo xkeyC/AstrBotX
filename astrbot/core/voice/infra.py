@@ -164,6 +164,11 @@ def infra_settings_error(settings: dict) -> str | None:
     Returns:
         The problem, or None when they are usable.
     """
+    if not settings["infra_url"]:
+        return (
+            "local-multimodal-infra or its realtime voice service is off, or the "
+            "server has no realtime voice model (WebUI: 模型提供商 → 本地多模态服务)"
+        )
     parts = urlsplit(str(settings["infra_url"]))
     if parts.scheme not in ("ws", "wss") or not parts.netloc:
         return (

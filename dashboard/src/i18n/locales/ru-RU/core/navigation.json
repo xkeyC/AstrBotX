@@ -12,7 +12,6 @@
         "logs": "Логи",
         "trace": "Трассировка"
     },
-    "subagent": "Субагенты",
     "codex": "Codex",
     "permissions": "Правила доступа",
     "toolUse": "Инструменты MCP",

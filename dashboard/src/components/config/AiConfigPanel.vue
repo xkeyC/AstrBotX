@@ -46,10 +46,6 @@
           <div>
             <h3 class="ai-config-panel__section-title">
               <span>{{ runnerSettingsTitle }}</span>
-              <AstrBotLogo
-                v-if="runnerType === 'local'"
-                class="ai-config-panel__brand-logo"
-              />
             </h3>
             <p class="ai-config-panel__section-subtitle">
               {{ currentRunner.description }}
@@ -57,35 +53,7 @@
           </div>
         </div>
 
-        <template v-if="runnerType === 'local'">
-          <div class="ai-config-tabs" role="tablist" :aria-label="runnerSettingsTitle">
-            <button
-              v-for="item in localTabs"
-              :key="item.value"
-              type="button"
-              class="ai-config-tabs__item"
-              :class="{ 'ai-config-tabs__item--active': activeLocalTab === item.value }"
-              role="tab"
-              :aria-selected="activeLocalTab === item.value"
-              @click="activeLocalTab = item.value"
-            >
-              {{ item.label }}
-            </button>
-          </div>
-
-          <div class="config-product-groups">
-            <AstrBotConfigV4
-              v-for="group in activeLocalGroups"
-              :key="group.key"
-              :metadata="{ [group.key]: group.metadata }"
-              :iterable="configData"
-              :metadata-key="group.key"
-              :search-keyword="searchKeyword"
-            />
-          </div>
-        </template>
-
-        <div v-else class="config-product-groups">
+        <div class="config-product-groups">
           <AstrBotConfigV4
             v-if="thirdPartyRunnerGroup"
             :metadata="{ [thirdPartyRunnerGroup.key]: thirdPartyRunnerGroup.metadata }"
@@ -205,7 +173,6 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue';
-import AstrBotLogo from '@/components/chat/ChatUILogo.vue';
 import AstrBotConfigV4 from '@/components/shared/AstrBotConfigV4.vue';
 import StyledMenu from '@/components/shared/StyledMenu.vue';
 import { useModuleI18n } from '@/i18n/composables';
@@ -232,7 +199,6 @@ const { tm } = useModuleI18n('features/config');
 const runnerDialog = ref(false);
 const pendingRunnerType = ref('codex');
 const runnerChangeAcknowledged = ref(false);
-const activeLocalTab = ref('model');
 
 const aiEnabled = computed({
   get() {
@@ -268,17 +234,8 @@ const currentRunner = computed(() => (
 ));
 
 const runnerSettingsTitle = computed(() => (
-  runnerType.value === 'local'
-    ? tm('aiSettings.localSettingsTitle')
-    : `${currentRunner.value.title} ${tm('aiSettings.settingsSuffix')}`
+  `${currentRunner.value.title} ${tm('aiSettings.settingsSuffix')}`
 ));
-
-const localTabs = computed(() => [
-  { value: 'model', label: tm('aiSettings.tabs.model') },
-  { value: 'persona', label: tm('aiSettings.tabs.persona') },
-  { value: 'capabilities', label: tm('aiSettings.tabs.capabilities') },
-  { value: 'advanced', label: tm('aiSettings.tabs.advanced') }
-]);
 
 function filterMetadataGroup(groupKey, itemFilter, overrides = {}) {
   const source = props.metadata?.[groupKey];
@@ -299,51 +256,6 @@ function filterMetadataGroup(groupKey, itemFilter, overrides = {}) {
   };
 }
 
-const localTabGroups = computed(() => {
-  const modelGroup = filterMetadataGroup(
-    'ai',
-    (itemKey) => itemKey.startsWith('agent_runner.config.model.'),
-    {
-      description: tm('aiSettings.groups.model'),
-      hint: tm('aiSettings.groups.modelHint')
-    }
-  );
-  const executionGroup = filterMetadataGroup(
-    'others',
-    (itemKey) => itemKey.startsWith('agent_runner.config.misc.'),
-    {
-      description: tm('aiSettings.groups.execution'),
-      hint: tm('aiSettings.groups.executionHint')
-    }
-  );
-
-  return {
-    model: [modelGroup].filter(Boolean),
-    persona: props.metadata?.persona
-      ? [{ key: 'persona', metadata: props.metadata.persona }]
-      : [],
-    capabilities: [
-      'knowledgebase',
-      'websearch',
-      'agent_computer_use',
-      'proactive_capability'
-    ].filter((key) => props.metadata?.[key]).map((key) => ({
-      key,
-      metadata: props.metadata[key]
-    })),
-    advanced: [
-      props.metadata?.truncate_and_compress
-        ? { key: 'truncate_and_compress', metadata: props.metadata.truncate_and_compress }
-        : null,
-      executionGroup
-    ].filter(Boolean)
-  };
-});
-
-const activeLocalGroups = computed(() => (
-  localTabGroups.value[activeLocalTab.value] || localTabGroups.value.model
-));
-
 const thirdPartyRunnerGroup = computed(() => {
   const key = `${runnerType.value}_runner`;
   return props.metadata?.[key]
@@ -352,13 +264,11 @@ const thirdPartyRunnerGroup = computed(() => {
 });
 
 // Codex runs AstrBot's persona, knowledge base, execution environment and
-// proactive tools just like the local runner does, so its layout shows those
-// groups too. Context compression and the local model picker stay out: Codex
-// owns its own context and model.
+// proactive tools, so its layout shows those groups too. Codex owns its own
+// context and model (set on the Codex page).
 const runnerSharedGroups = computed(() => [
   'persona',
   'knowledgebase',
-  'websearch',
   'agent_computer_use',
   'proactive_capability'
 ].filter((key) => props.metadata?.[key]).map((key) => ({
@@ -384,10 +294,6 @@ const commonGroups = computed(() => [
     }
   )
 ].filter(Boolean));
-
-watch(runnerType, () => {
-  activeLocalTab.value = 'model';
-});
 
 watch(pendingRunnerType, () => {
   runnerChangeAcknowledged.value = false;
@@ -492,45 +398,6 @@ function confirmRunnerChange() {
   font-size: 1.04rem;
   font-weight: 760;
   line-height: 1.32;
-}
-
-.ai-config-panel__brand-logo {
-  flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
-}
-
-.ai-config-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 14px;
-  overflow-x: auto;
-}
-
-.ai-config-tabs__item {
-  flex: 0 0 auto;
-  min-height: 30px;
-  padding: 5px 12px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: rgba(var(--v-theme-on-surface), 0.58);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.78rem;
-  font-weight: 650;
-}
-
-.ai-config-tabs__item:hover {
-  color: rgb(var(--v-theme-on-surface));
-  background: rgba(var(--v-theme-on-surface), 0.045);
-}
-
-.ai-config-tabs__item--active {
-  color: rgb(var(--v-theme-on-surface));
-  background: rgba(var(--v-theme-on-surface), 0.08);
-  font-weight: 740;
 }
 
 .ai-disabled-state {

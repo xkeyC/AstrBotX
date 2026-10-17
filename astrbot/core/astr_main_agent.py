@@ -13,7 +13,6 @@ from pathlib import Path
 
 from astrbot.core import logger
 from astrbot.core.agent.context.persistent_context import MESSAGE_META_UNIT
-from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.mcp_client import MCPTool
 from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import ToolSet
@@ -95,25 +94,6 @@ from astrbot.core.tools.message_tools import (
     GetGroupMessageHistoryTool,
     SendMessageToUserTool,
 )
-from astrbot.core.tools.web_search_tools import (
-    AnySearchWebSearchTool,
-    BaiduWebSearchTool,
-    BochaWebSearchTool,
-    BraveWebSearchTool,
-    DeepSeekFetchWebPageTool,
-    DeepSeekWebSearchTool,
-    ExaGetContentsTool,
-    ExaWebSearchTool,
-    FirecrawlExtractWebPageTool,
-    FirecrawlWebSearchTool,
-    SerpApiFinanceSearchTool,
-    SerpApiImageSearchTool,
-    SerpApiScholarSearchTool,
-    SerpApiWebSearchTool,
-    TavilyExtractWebPageTool,
-    TavilyWebSearchTool,
-    normalize_legacy_web_search_config,
-)
 from astrbot.core.utils.astrbot_path import (
     get_astrbot_system_tmp_path,
     get_astrbot_workspaces_path,
@@ -161,27 +141,6 @@ WEEKDAY_NAMES = (
     "Friday",
     "Saturday",
     "Sunday",
-)
-WEB_SEARCH_CITATION_TOOL_NAMES = frozenset(
-    {
-        "web_search_baidu",
-        "web_search_tavily",
-        "web_search_bocha",
-        "web_search_brave",
-        "web_search_exa",
-        "web_search_anysearch",
-        "web_search_deepseek",
-        "web_search_serpapi",
-        "image_search_serpapi",
-        "finance_search_serpapi",
-        "scholar_search_serpapi",
-    }
-)
-WEB_SEARCH_CITATION_PROMPT = (
-    "Always cite web search results you rely on. "
-    "Index is a unique identifier for each search result. "
-    "Use the exact citation format <ref>index</ref> (e.g. <ref>abcd.3</ref>) "
-    "after the sentence that uses the information. Do not invent citations."
 )
 
 
@@ -241,7 +200,6 @@ class MainAgentBuildConfig:
     provider_settings: dict = field(default_factory=dict)
     fallback_provider_ids: list[str] = field(default_factory=list)
     request_max_retries: int = 5
-    subagent_orchestrator: dict = field(default_factory=dict)
     timezone: str | None = None
     max_quoted_fallback_images: int = 20
     """Maximum number of images injected from quoted-message fallback extraction."""
@@ -617,7 +575,9 @@ def _apply_local_env_tools(
     req.set_context_anchor("local_runtime", _build_local_mode_prompt())
 
 
-def _build_local_mode_prompt() -> str:
+def _build_local_mode_prompt(codex_tools: bool = False) -> str:
+    """The Local runtime note; ``codex_tools``: the shell tools are Codex's
+    ``exec_command`` / ``write_stdin`` instead of AstrBot's."""
     system_name = platform.system() or "Unknown"
     if system_name.lower() != "windows":
         shell_hint = (
@@ -634,6 +594,15 @@ def _build_local_mode_prompt() -> str:
             "The runtime shell is Windows PowerShell 5.1 (powershell.exe). "
             "Use Windows PowerShell 5.1-compatible syntax and cmdlets; do not use "
             "PowerShell 7-only syntax or assume Unix commands like cat/ls/grep are available."
+        )
+    if codex_tools:
+        return (
+            "Local computer tools are available subject to your role's file and execution permissions. "
+            f"Current operating system: {system_name}. "
+            f"{shell_hint} "
+            "A command that outlives `exec_command`'s wait returns a session ID; use "
+            "`write_stdin` to poll it or write to it. Do not add `&`, `nohup`, or another "
+            "detachment wrapper for ordinary long-running commands."
         )
     return (
         "Local computer tools are available subject to your role's file and execution permissions. "
@@ -782,7 +751,7 @@ async def _ensure_persona_and_skills(
             skills = sorted(skills, key=lambda skill: (skill.name, skill.path))
             if cfg.get("_codex_skills"):
                 # Codex runner: skills are read through the astrbot_read_skill
-                # tool, from this host or from the sandbox (shipyard mode).
+                # tool, from this host or from the sandbox (sandbox runtime).
                 from astrbot.core.agent.runners.codex.skills import (
                     SKILLS_EXTRA,
                     SKILLS_IN_SANDBOX_EXTRA,
@@ -829,67 +798,6 @@ async def _ensure_persona_and_skills(
     else:
         req.func_tool.merge(persona_toolset)
 
-    # sub agents integration
-    orch_cfg = plugin_context.get_config().get("subagent_orchestrator", {})
-    so = plugin_context.subagent_orchestrator
-    if orch_cfg.get("main_enable", False) and so:
-        remove_dup = bool(orch_cfg.get("remove_main_duplicate_tools", False))
-
-        assigned_tools: set[str] = set()
-        agents = orch_cfg.get("agents", [])
-        if isinstance(agents, list):
-            for a in agents:
-                if not isinstance(a, dict):
-                    continue
-                if a.get("enabled", True) is False:
-                    continue
-                persona_tools = None
-                pid = a.get("persona_id")
-                if pid:
-                    persona = plugin_context.persona_manager.get_persona_v3_by_id(pid)
-                    if persona is not None:
-                        persona_tools = persona.get("tools")
-                tools = a.get("tools", [])
-                if persona_tools is not None:
-                    tools = persona_tools
-                if tools is None:
-                    assigned_tools.update(
-                        [
-                            tool.name
-                            for tool in tmgr.func_list
-                            if not isinstance(tool, HandoffTool)
-                        ]
-                    )
-                    continue
-                if not isinstance(tools, list):
-                    continue
-                for t in tools:
-                    name = str(t).strip()
-                    if name:
-                        assigned_tools.add(name)
-
-        if req.func_tool is None:
-            req.func_tool = ToolSet()
-
-        # add subagent handoff tools
-        for tool in so.handoffs:
-            req.func_tool.add_tool(tool)
-
-        # check duplicates
-        if remove_dup:
-            handoff_names = {tool.name for tool in so.handoffs}
-            for tool_name in assigned_tools:
-                if tool_name in handoff_names:
-                    continue
-                req.func_tool.remove_tool(tool_name)
-
-        router_prompt = (
-            plugin_context.get_config()
-            .get("subagent_orchestrator", {})
-            .get("router_system_prompt", "")
-        ).strip()
-        if router_prompt:
-            req.set_context_anchor("subagent_router", router_prompt)
     try:
         event.trace.record(
             "sel_persona",
@@ -1287,7 +1195,7 @@ def _plugin_tool_fix(event: AstrMessageEvent, req: ProviderRequest) -> None:
                 continue
             mp = tool.handler_module_path
             if not mp:
-                # 没有 plugin 归属信息的工具（如 subagent transfer_to_*）
+                # 没有 plugin 归属信息的工具（如插件 agent 的 transfer_to_*）
                 # 不应受到会话插件过滤影响。
                 new_tool_set.add_tool(tool)
                 continue
@@ -1466,66 +1374,6 @@ def _proactive_cron_job_tools(req: ProviderRequest, plugin_context: Context) -> 
         req.func_tool = ToolSet()
     tool_mgr = plugin_context.get_llm_tool_manager()
     req.func_tool.add_tool(tool_mgr.get_builtin_tool(FutureTaskTool))
-
-
-async def _apply_web_search_tools(
-    event: AstrMessageEvent,
-    req: ProviderRequest,
-    plugin_context: Context,
-) -> None:
-    cfg = plugin_context.get_config(umo=event.unified_msg_origin)
-    normalize_legacy_web_search_config(cfg)
-    prov_settings = cfg.get("provider_settings", {})
-
-    if not prov_settings.get("web_search", False):
-        return
-
-    if req.func_tool is None:
-        req.func_tool = ToolSet()
-
-    tool_mgr = plugin_context.get_llm_tool_manager()
-    provider = prov_settings.get("websearch_provider", "tavily")
-    if provider == "tavily":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(TavilyWebSearchTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(TavilyExtractWebPageTool))
-    elif provider == "bocha":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(BochaWebSearchTool))
-    elif provider == "brave":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(BraveWebSearchTool))
-    elif provider == "firecrawl":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(FirecrawlWebSearchTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(FirecrawlExtractWebPageTool))
-    elif provider == "baidu_ai_search":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(BaiduWebSearchTool))
-    elif provider == "exa":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(ExaWebSearchTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(ExaGetContentsTool))
-    elif provider == "anysearch":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(AnySearchWebSearchTool))
-    elif provider == "deepseek":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(DeepSeekWebSearchTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(DeepSeekFetchWebPageTool))
-    elif provider == "serpapi":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(SerpApiWebSearchTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(SerpApiImageSearchTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(SerpApiFinanceSearchTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(SerpApiScholarSearchTool))
-
-
-def _apply_web_search_citation_prompt(
-    event: AstrMessageEvent,
-    req: ProviderRequest,
-) -> None:
-    if event.get_platform_name() != "webchat" or not req.func_tool:
-        return
-
-    if not any(req.func_tool.get_tool(name) for name in WEB_SEARCH_CITATION_TOOL_NAMES):
-        return
-
-    req.set_context_anchor(
-        "web_search_citations",
-        WEB_SEARCH_CITATION_PROMPT,
-    )
 
 
 async def _get_compress_provider(
@@ -2075,7 +1923,6 @@ async def build_main_agent(
         req.session_id = event.unified_msg_origin
 
     _plugin_tool_fix(event, req)
-    await _apply_web_search_tools(event, req, plugin_context)
 
     if config.llm_safety_mode:
         _apply_llm_safety_mode(config, req)
@@ -2186,7 +2033,6 @@ async def build_main_agent(
     if action_type == "live":
         req.set_context_anchor("live_mode", LIVE_MODE_SYSTEM_PROMPT)
 
-    _apply_web_search_citation_prompt(event, req)
     # The main agent declares every standing instruction of the conversation,
     # so stored anchors it no longer declares are revoked.
     req.context_anchors_complete = True

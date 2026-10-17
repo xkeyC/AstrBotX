@@ -77,7 +77,6 @@
     "fullscreen": "Fullscreen Mode",
     "exitFullscreen": "Exit Fullscreen",
     "reply": "Reply",
-    "providerConfig": "Model Configuration",
     "toolsUsed": "Tool Used",
     "toolCallUsed": "Used {name} tool",
     "pythonCodeAnalysis": "Python Code Analysis Used"

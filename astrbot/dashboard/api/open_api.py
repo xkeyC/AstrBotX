@@ -11,7 +11,6 @@ from astrbot.dashboard.services.auth_service import CHAT_ADMIN_SCOPE
 from astrbot.dashboard.services.chat_service import (
     ChatService,
     ChatServiceError,
-    extract_web_search_refs,
 )
 from astrbot.dashboard.services.open_api_service import (
     OpenApiService,
@@ -141,7 +140,6 @@ def _build_chat_ws_bridge(
             message if isinstance(message, str | list) else str(message),
         ),
         create_attachment_from_file=chat_service.create_attachment_from_file,
-        extract_web_search_refs=extract_web_search_refs,
         insert_user_message=lambda session_id, effective_username, message_parts: (
             _insert_webchat_user_message(
                 open_api_service,

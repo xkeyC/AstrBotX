@@ -68,10 +68,10 @@ class Main(star.Star):
     async def provider(
         self,
         event: AstrMessageEvent,
-        idx: str | int | None = None,
+        idx: str | None = None,
         idx2: int | None = None,
     ) -> None:
-        """View or switch LLM Provider"""
+        """View or switch TTS / STT Provider"""
         await self.provider_c.provider(event, idx, idx2)
 
     @filter.permission_type(filter.PermissionType.ADMIN)

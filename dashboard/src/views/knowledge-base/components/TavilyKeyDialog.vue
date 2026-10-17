@@ -78,13 +78,8 @@ const saveKey = async () => {
 
     const currentConfig = ((configResponse.data.data as any).config || {}) as any
 
-    // 2. 更新配置
-    if (!currentConfig.provider_settings) {
-      currentConfig.provider_settings = {}
-    }
-    currentConfig.provider_settings.websearch_tavily_key = [apiKey.value.trim()]
-    // 同时将搜索提供商设置为 tavily
-    currentConfig.provider_settings.websearch_provider = 'tavily'
+    // 2. 更新配置（知识库网页导入专用的 Key，只从默认配置读取）
+    currentConfig.kb_tavily_key = [apiKey.value.trim()]
 
     // 3. 保存整个配置
     const saveResponse = await configProfileApi.update('default', currentConfig)

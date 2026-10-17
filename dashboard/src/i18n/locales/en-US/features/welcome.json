@@ -5,15 +5,15 @@
     "evening": "Good evening, welcome to AstrBot",
     "newYear": "Happy New Year!"
   },
-  "subtitle": "You can complete the basic onboarding first. Platform and chat provider setup can both be skipped.",
+  "subtitle": "You can complete the basic onboarding first. Platform and Codex model setup can both be skipped.",
   "announcement": {
     "title": "Announcement"
   },
   "onboard": {
     "title": "Quick Onboarding",
     "subtitle": "Complete initialization directly on the welcome page.",
-    "step1Title": "Configure AI Model",
-    "step1Desc": "Configure AI models for AstrBot.",
+    "step1Title": "Set Up the Codex Model",
+    "step1Desc": "The agent runs on Codex, and its model is set only on the Codex page: sign in with a ChatGPT account or an OpenAI API key, or add a custom model provider, then choose a model.",
     "step2Title": "Configure Platform Bot",
     "step2Desc": "Connect AstrBot to IM platforms like QQ, Lark, Slack, Telegram, etc.",
     "step3Title": "Allow Agent to Use the Computer",
@@ -24,6 +24,7 @@
     "step3HelpClose": "Close",
     "step3SelectLabel": "Computer Access",
     "step3Allow": "Allow",
+    "step3Sandbox": "Sandbox only (Shipyard or another third-party sandbox)",
     "step3Deny": "Disallow",
     "configure": "Configure",
     "save": "Save",
@@ -32,9 +33,6 @@
     "completed": "Completed",
     "skipped": "Skipped",
     "platformLoadFailed": "Failed to load platform configuration",
-    "providerLoadFailed": "Failed to load provider configuration",
-    "providerUpdateFailed": "Failed to update default chat provider in config file \"default\"",
-    "providerDefaultUpdated": "Default chat provider in config file \"default\" has been set to {id}",
     "computerAccessUpdateFailed": "Failed to update Agent computer access",
     "computerAccessAllowed": "Agent is now allowed to access and use the computer",
     "computerAccessDenied": "Agent is no longer allowed to access and use the computer",

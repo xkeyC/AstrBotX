@@ -12,7 +12,6 @@
     "logs": "日志",
     "trace": "追踪"
   },
-  "subagent": "子代理编排",
   "codex": "Codex",
   "permissions": "权限规则",
   "toolUse": "MCP",

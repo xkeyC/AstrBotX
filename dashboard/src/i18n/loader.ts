@@ -53,7 +53,6 @@ export class I18nLoader {
       { name: 'features/chart', path: 'features/chart.json' },
       { name: 'features/dashboard', path: 'features/dashboard.json' },
       { name: 'features/cron', path: 'features/cron.json' },
-      { name: 'features/subagent', path: 'features/subagent.json' },
       { name: 'features/codex', path: 'features/codex.json' },
       { name: 'features/permissions', path: 'features/permissions.json' },
       { name: 'features/alkaid/index', path: 'features/alkaid/index.json' },

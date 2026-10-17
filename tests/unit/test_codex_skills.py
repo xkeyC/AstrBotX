@@ -190,7 +190,7 @@ async def test_an_unreadable_named_skill_is_left_to_the_model():
 
 
 @pytest.mark.asyncio
-async def test_the_tool_reads_from_the_sandbox_in_shipyard_mode(monkeypatch):
+async def test_the_tool_reads_from_the_sandbox_with_the_sandbox_runtime(monkeypatch):
     booter = _booter({"/workspace/skills/pdf/SKILL.md": "SANDBOX STEPS"})
 
     async def get_booter(context, umo):

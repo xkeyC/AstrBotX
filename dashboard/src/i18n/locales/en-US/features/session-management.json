@@ -24,7 +24,7 @@
     "serviceConfig": "Service Config",
     "pluginConfig": "Plugin Config",
     "kbConfig": "Knowledge Base",
-    "providerConfig": "Provider Config",
+    "providerConfig": "Speech Providers",
     "configured": "Configured",
     "noCustomName": "No note set"
   },
@@ -64,8 +64,7 @@
       "customName": "Custom Name"
     },
     "providerConfig": {
-      "title": "Provider Configuration",
-      "chatProvider": "Chat Provider",
+      "title": "Speech Providers (STT / TTS)",
       "sttProvider": "STT Provider",
       "ttsProvider": "TTS Provider"
     },
@@ -82,8 +81,7 @@
     "kbConfig": {
       "title": "Knowledge Base Configuration",
       "selectKbs": "Select Knowledge Bases",
-      "topK": "Top K Results",
-      "enableRerank": "Enable Reranking"
+      "topK": "Top K Results"
     }
   },
   "deleteConfirm": {
@@ -104,7 +102,6 @@
     "scopePrivate": "All private chats",
     "llmStatus": "LLM Status",
     "ttsStatus": "TTS Status",
-    "chatProvider": "Chat Model",
     "ttsProvider": "TTS Model",
     "apply": "Apply Changes"
   },

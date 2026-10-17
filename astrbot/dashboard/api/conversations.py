@@ -312,16 +312,6 @@ async def delete_dashboard_conversation(
     return await _run(lambda: service.delete_conversation(body))
 
 
-@legacy_router.post("/update_history")
-async def update_dashboard_conversation_history(
-    request: Request,
-    _username: str = Depends(require_dashboard_user),
-    service: ConversationService = Depends(get_service),
-):
-    body = await _json_or_empty(request)
-    return await _run(lambda: service.update_history(body))
-
-
 @legacy_router.post("/export")
 async def export_dashboard_conversations(
     request: Request,

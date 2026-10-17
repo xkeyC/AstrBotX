@@ -227,7 +227,7 @@
 
         <!-- 对话详情对话框 -->
         <v-dialog v-model="dialogView" max-width="900px" scrollable>
-            <v-card class="conversation-detail-card" :class="{ 'conversation-detail-card--edit': isEditingHistory }">
+            <v-card class="conversation-detail-card">
                 <v-card-title class="text-h3 pa-4 pb-0 pl-6 conversation-detail-title">
                     <div class="conversation-detail-heading">
                         <span class="text-truncate">{{ selectedConversation?.title || tm('status.noTitle') }}</span>
@@ -249,34 +249,13 @@
                     </div>
                 </v-card-title>
 
-                <div class="pl-6 pr-4 pt-4 pb-2 d-flex align-center">
-                    <v-btn color="secondary" variant="tonal" size="small" class="mr-2"
-                        @click="isEditingHistory = !isEditingHistory">
-                        <v-icon class="mr-1">{{ isEditingHistory ? 'mdi-eye' : 'mdi-pencil' }}</v-icon>
-                        {{ isEditingHistory ? tm('dialogs.view.previewMode') : tm('dialogs.view.editMode') }}
-                    </v-btn>
-                    <v-btn v-if="isEditingHistory" color="success" variant="tonal" size="small"
-                        :loading="savingHistory" @click="saveHistoryChanges">
-                        <v-icon class="mr-1">mdi-content-save</v-icon>
-                        {{ tm('dialogs.view.saveChanges') }}
-                    </v-btn>
-                </div>
+                <!-- A read-only copy: Codex keeps the real context in its own thread. -->
+                <v-alert class="mx-6 mt-4" type="info" variant="tonal" density="compact">
+                    {{ tm('dialogs.view.mirrorNotice') }}
+                </v-alert>
 
                 <v-card-text>
-                    <!-- 编辑模式 - Monaco编辑器 -->
-                    <div v-if="isEditingHistory" class="monaco-editor-container">
-                        <VueMonacoEditor v-model:value="editedHistory" theme="vs-dark" language="json" :options="{
-                            automaticLayout: true,
-                            fontSize: 13,
-                            tabSize: 2,
-                            minimap: { enabled: false },
-                            scrollBeyondLastLine: false,
-                            wordWrap: 'on'
-                        }" @editorDidMount="onMonacoMounted" />
-                    </div>
-
-                    <!-- 预览模式 - 聊天界面 -->
-                    <div v-else class="conversation-messages-container" style="background-color: var(--v-theme-surface);">
+                    <div class="conversation-messages-container" style="background-color: var(--v-theme-surface);">
                         <!-- 空对话提示 -->
                         <div v-if="conversationHistory.length === 0" class="text-center py-5">
                             <v-icon size="48" color="grey">mdi-chat-remove</v-icon>
@@ -407,23 +386,17 @@
 import { isCancel } from 'axios';
 import { debounce } from 'lodash';
 import { markRaw } from 'vue';
-import { LazyMonacoEditor as VueMonacoEditor } from '@/components/shared/LazyMonacoEditor';
 import { conversationApi } from '@/api/v1';
 import { useCommonStore } from '@/stores/common';
 import { useCustomizerStore } from '@/stores/customizer';
 import { useI18n, useModuleI18n } from '@/i18n/composables';
 import MessageList from '@/components/chat/MessageList.vue';
 import UmoDisplay from '@/components/shared/UmoDisplay.vue';
-import {
-    askForConfirmation as askForConfirmationDialog,
-    useConfirmDialog
-} from '@/utils/confirmDialog';
 import { copyToClipboard } from '@/utils/clipboard';
 
 export default {
     name: 'ConversationPage',
     components: {
-        VueMonacoEditor,
         MessageList,
         UmoDisplay
     },
@@ -432,14 +405,12 @@ export default {
         const { t, locale } = useI18n();
         const { tm } = useModuleI18n('features/conversation');
         const customizerStore = useCustomizerStore();
-        const confirmDialog = useConfirmDialog();
 
         return {
             t,
             tm,
             locale,
-            customizerStore,
-            confirmDialog
+            customizerStore
         };
     },
 
@@ -495,11 +466,6 @@ export default {
             message: '',
             messageType: 'success',
 
-            // 对话历史编辑
-            isEditingHistory: false,
-            editedHistory: '',
-            savingHistory: false,
-            monacoEditor: null,
             umoDisplayMode: 'parsed',
 
             commonStore: useCommonStore()
@@ -648,21 +614,6 @@ export default {
     },
 
     methods: {
-        // Monaco编辑器挂载后的回调
-        onMonacoMounted(editor) {
-            this.monacoEditor = editor;
-            // 添加JSON格式校验
-            editor.onDidChangeModelContent(() => {
-                try {
-                    JSON.parse(this.editedHistory);
-                    // 有效的JSON格式
-                    editor.getAction('editor.action.formatDocument').run();
-                } catch (e) {
-                    // 无效的JSON格式，不做处理，Monaco编辑器会自动提示
-                }
-            });
-        },
-
         // 处理表格选项变更（页面大小等）
         handleTableOptions(options) {
             // 处理页面大小变更
@@ -862,7 +813,6 @@ export default {
         async viewConversation(item) {
             this.selectedConversation = item;
             this.actionLoading = true;
-            this.isEditingHistory = false;
 
             try {
                 console.log(`正在请求对话详情，user_id=${item.user_id}, cid=${item.cid}`);
@@ -882,10 +832,8 @@ export default {
 
                         const historyData = detailData.history || '[]';
                         this.conversationHistory = JSON.parse(historyData);
-                        this.editedHistory = JSON.stringify(this.conversationHistory, null, 2);
                     } catch (e) {
                         this.conversationHistory = [];
-                        this.editedHistory = '[]';
                         console.error('解析对话历史失败:', e);
                     }
                     this.dialogView = true;
@@ -900,54 +848,9 @@ export default {
             }
         },
 
-        // 保存对话历史的修改
-        async saveHistoryChanges() {
-            if (!this.selectedConversation) return;
-
-            this.savingHistory = true;
-
-            try {
-                // 验证JSON格式
-                let historyJson;
-                try {
-                    historyJson = JSON.parse(this.editedHistory);
-                } catch (e) {
-                    this.showErrorMessage(this.tm('messages.invalidJson'));
-                    return;
-                }
-
-                const response = await conversationApi.replaceMessages(
-                    this.selectedConversation.user_id,
-                    this.selectedConversation.cid,
-                    {
-                    history: historyJson
-                    }
-                );
-
-                if (response.data.status === "ok") {
-                    this.conversationHistory = historyJson;
-                    this.showSuccessMessage(this.tm('messages.historySaveSuccess'));
-                    this.isEditingHistory = false;
-                } else {
-                    this.showErrorMessage(response.data.message || this.tm('messages.historySaveError'));
-                }
-            } catch (error) {
-                console.error('更新对话历史出错:', error);
-                this.showErrorMessage(error.response?.data?.message || error.message || this.tm('messages.historySaveError'));
-            } finally {
-                this.savingHistory = false;
-            }
-        },
-
         // 关闭对话历史对话框
-        async closeHistoryDialog() {
-            if (this.isEditingHistory) {
-                if (await askForConfirmationDialog(this.tm('dialogs.view.confirmClose'), this.confirmDialog)) {
-                    this.dialogView = false;
-                }
-            } else {
-                this.dialogView = false;
-            }
+        closeHistoryDialog() {
+            this.dialogView = false;
         },
 
         // 编辑对话
@@ -1282,22 +1185,6 @@ export default {
     font-weight: 500;
 }
 
-/* 编辑模式：编辑器填满剩余高度，避免与外层滚动条叠加 */
-.conversation-detail-card--edit > .v-card-text {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-}
-
-.monaco-editor-container {
-    flex: 1;
-    min-height: 0;
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-}
-
 /* 聊天消息容器样式 */
 .conversation-messages-container {
     padding: 8px;
@@ -1327,11 +1214,6 @@ export default {
     max-height: 90vh;
     display: flex;
     flex-direction: column;
-}
-
-/* 编辑模式：卡片固定高度，让 flex 链完整，Monaco 填满剩余空间 */
-.v-dialog > .v-overlay__content > .conversation-detail-card--edit {
-    flex: 0 0 90vh;
 }
 
 .conversation-detail-title {

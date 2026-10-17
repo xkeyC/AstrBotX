@@ -77,7 +77,6 @@
     "fullscreen": "На весь экран",
     "exitFullscreen": "Выход из полноэкранного режима",
     "reply": "Ответить",
-    "providerConfig": "Настройки AI",
     "toolsUsed": "Использованные инструменты",
     "toolCallUsed": "Использован инструмент {name}",
     "pythonCodeAnalysis": "Использован анализ кода Python"
