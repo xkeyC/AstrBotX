@@ -235,13 +235,22 @@ class ToolSet:
 
         Tool definitions sit in front of the prompt-cache prefix, so they are
         sorted by name to stay stable when registration order changes.
+
+        Raises:
+            ValueError: If a tool explicitly declares a non-object root type.
         """
         result = []
         for tool in sorted(self.tools, key=lambda item: item.name):
             input_schema = {"type": "object"}
             if tool.parameters:
-                input_schema["properties"] = tool.parameters.get("properties", {})
-                input_schema["required"] = tool.parameters.get("required", [])
+                if tool.parameters.get("type", "object") != "object":
+                    raise ValueError(
+                        f"Anthropic tool '{tool.name}' input schema must have an object root."
+                    )
+                # Preserve reference targets and all other JSON Schema constraints.
+                input_schema.update(copy.deepcopy(tool.parameters))
+                input_schema.setdefault("properties", {})
+                input_schema.setdefault("required", [])
             tool_def = {"name": tool.name, "input_schema": input_schema}
             if tool.description:
                 tool_def["description"] = tool.description

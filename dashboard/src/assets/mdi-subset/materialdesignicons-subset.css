@@ -1,4 +1,4 @@
-/* Auto-generated MDI subset – 273 icons */
+/* Auto-generated MDI subset – 267 icons */
 /* Do not edit manually. Run: pnpm run subset-icons */
 
 @font-face {
@@ -24,16 +24,16 @@
   content: "\F0004";
 }
 
-.mdi-account-alert-outline::before {
-  content: "\F0B50";
-}
-
 .mdi-account-edit::before {
   content: "\F06BC";
 }
 
 .mdi-account-edit-outline::before {
   content: "\F0FFB";
+}
+
+.mdi-account-lock-outline::before {
+  content: "\F115F";
 }
 
 .mdi-account-voice::before {
@@ -156,10 +156,6 @@
   content: "\F00F3";
 }
 
-.mdi-cancel::before {
-  content: "\F073A";
-}
-
 .mdi-chat::before {
   content: "\F0B79";
 }
@@ -240,10 +236,6 @@
   content: "\F09DF";
 }
 
-.mdi-clock-outline::before {
-  content: "\F0150";
-}
-
 .mdi-clock-time-four-outline::before {
   content: "\F144E";
 }
@@ -262,10 +254,6 @@
 
 .mdi-cloud-upload::before {
   content: "\F0167";
-}
-
-.mdi-code-braces-box::before {
-  content: "\F10D6";
 }
 
 .mdi-code-json::before {
@@ -496,6 +484,10 @@
   content: "\F0234";
 }
 
+.mdi-filter-variant::before {
+  content: "\F0236";
+}
+
 .mdi-folder-move::before {
   content: "\F0252";
 }
@@ -544,20 +536,8 @@
   content: "\F02A4";
 }
 
-.mdi-grain::before {
-  content: "\F0D7C";
-}
-
 .mdi-hand-heart::before {
   content: "\F10F1";
-}
-
-.mdi-hand-wave-outline::before {
-  content: "\F1822";
-}
-
-.mdi-heart::before {
-  content: "\F02D1";
 }
 
 .mdi-help-circle-outline::before {
@@ -812,10 +792,6 @@
   content: "\F0DEB";
 }
 
-.mdi-pencil-ruler::before {
-  content: "\F1353";
-}
-
 .mdi-pin::before {
   content: "\F0403";
 }
@@ -926,10 +902,6 @@
 
 .mdi-server-off::before {
   content: "\F048F";
-}
-
-.mdi-shield-account-outline::before {
-  content: "\F0A12";
 }
 
 .mdi-shield-check::before {
@@ -1072,12 +1044,16 @@
   content: "\F055D";
 }
 
-.mdi-vector-link::before {
-  content: "\F0FE8";
-}
-
 .mdi-vector-point::before {
   content: "\F01C4";
+}
+
+.mdi-view-grid::before {
+  content: "\F0570";
+}
+
+.mdi-view-grid-outline::before {
+  content: "\F11D9";
 }
 
 .mdi-volume-high::before {

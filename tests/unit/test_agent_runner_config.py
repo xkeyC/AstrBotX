@@ -203,7 +203,7 @@ def test_legacy_provider_settings_are_dropped_and_codex_is_selected():
     }
 
     assert _migrate_agent_runner_config(config)
-    assert config["config_version"] == 3
+    assert config["config_version"] == 4
     assert config["agent_runner"] == _codex_default_runner()
     assert config["provider_settings"] == {"streaming_response": True}
     assert not _migrate_agent_runner_config(config)
@@ -234,7 +234,7 @@ def test_codex_agent_runner_root_is_left_untouched():
         },
     }
     config = {
-        "config_version": 3,
+        "config_version": 4,
         "provider_settings": {},
         "agent_runner": copy.deepcopy(runner),
     }

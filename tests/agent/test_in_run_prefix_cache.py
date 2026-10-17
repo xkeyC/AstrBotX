@@ -138,7 +138,7 @@ async def _run(provider, starting_usage: int = 0) -> None:
             ]
         ),
     )
-    request.conversation = SimpleNamespace(token_usage=starting_usage)
+    request.conversation = SimpleNamespace(cid="conv-1", token_usage=starting_usage)
     runner = ToolLoopAgentRunner()
     await runner.reset(
         provider=provider,

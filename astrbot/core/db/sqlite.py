@@ -448,8 +448,23 @@ class SQLiteDatabase(BaseDatabase):
                 conditions.append(col(ConversationV2.platform_id).in_(platforms))
             exclude_ids = kwargs.get("exclude_ids") or []
             for exclude_id in exclude_ids:
+                # Match the whole UMO or its platform segment only, so an id
+                # like "astrbot" does not swallow platforms such as
+                # "astrbotweb". Escape LIKE wildcards inside the id itself.
+                escaped = (
+                    exclude_id.replace("\\", "\\\\")
+                    .replace("%", r"\%")
+                    .replace("_", r"\_")
+                )
                 conditions.append(
-                    not_(col(ConversationV2.user_id).like(f"{exclude_id}%"))
+                    not_(
+                        or_(
+                            col(ConversationV2.user_id) == exclude_id,
+                            col(ConversationV2.user_id).like(
+                                f"{escaped}:%", escape="\\"
+                            ),
+                        )
+                    )
                 )
             exclude_platforms = kwargs.get("exclude_platforms") or []
             if exclude_platforms:
@@ -1420,10 +1435,12 @@ class SQLiteDatabase(BaseDatabase):
         return await self.get_persona_folder_by_id(folder_id)
 
     async def delete_persona_folder(self, folder_id: str) -> None:
-        """Delete a persona folder by its folder_id.
+        """Delete a folder, moving its direct personas and child folders to root.
 
-        Note: This will also set folder_id to NULL for all personas in this folder,
-        moving them to the root directory.
+        Descendant folders retain their contents and internal hierarchy.
+
+        Args:
+            folder_id: ID of the folder to delete.
         """
         async with self.get_db() as session:
             session: AsyncSession
@@ -1433,6 +1450,12 @@ class SQLiteDatabase(BaseDatabase):
                     update(Persona)
                     .where(col(Persona.folder_id) == folder_id)
                     .values(folder_id=None)
+                )
+                # Preserve child subtrees by moving them to the root directory.
+                await session.execute(
+                    update(PersonaFolder)
+                    .where(col(PersonaFolder.parent_id) == folder_id)
+                    .values(parent_id=None)
                 )
                 # Delete the folder
                 await session.execute(
@@ -2180,7 +2203,9 @@ class SQLiteDatabase(BaseDatabase):
             total = int(total_result.scalar_one() or 0)
 
             result_query = (
-                base_query.order_by(desc(PlatformSession.updated_at))
+                base_query.order_by(
+                    desc(PlatformSession.updated_at), desc(PlatformSession.session_id)
+                )
                 .offset(offset)
                 .limit(page_size)
             )

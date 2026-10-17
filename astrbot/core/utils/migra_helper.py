@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import platform
 import traceback
 from pathlib import Path
 from typing import Any
@@ -148,8 +149,9 @@ def _migrate_agent_runner_config(config: dict[str, Any]) -> bool:
         config["agent_runner"] = normalize_agent_runner(existing_agent_runner)
         changed = True
 
-    if config.get("config_version") != 3:
-        config["config_version"] = 3
+    config_version = config.get("config_version")
+    if not isinstance(config_version, int) or config_version < 4:
+        config["config_version"] = 4
         changed = True
     return changed
 
@@ -172,7 +174,48 @@ def migrate_config_on_load(config: dict[str, Any], config_path: Path) -> bool:
     changed = _migrate_dynamic_persona_bindings(config, config_path) or changed
     changed = _migrate_voice_settings(config) or changed
     changed = _migrate_qq_call_voice(config, config_path) or changed
+    changed = _migrate_windows_member_scope(config) or changed
     return changed
+
+
+def _migrate_windows_member_scope(config: dict[str, Any]) -> bool:
+    """Upstream v4.29.1 (config_version 5): on Windows the members' old
+    default Local policy (no execution, no network, no files) becomes
+    workspace file access, once; code execution stays off.
+
+    Args:
+        config: Mutable AstrBot configuration loaded from disk.
+
+    Returns:
+        Whether the configuration changed.
+    """
+    config_version = config.get("config_version")
+    if isinstance(config_version, int) and config_version >= 5:
+        return False
+    provider_settings = config.get("provider_settings", {})
+    permissions = (
+        provider_settings.get("computer_use_local_permissions", {})
+        if isinstance(provider_settings, dict)
+        else {}
+    )
+    if (
+        platform.system() == "Windows"
+        and isinstance(permissions, dict)
+        and permissions.get("member")
+        == {
+            "allow_execution": False,
+            "allow_network": False,
+            "filesystem_scope": "none",
+        }
+    ):
+        # The old default and an explicit disabled policy are indistinguishable.
+        permissions["member"]["filesystem_scope"] = "workspace"
+        logger.info(
+            "Migrated Windows member Local file access from disabled to workspace; "
+            "code execution and execution network access remain disabled."
+        )
+    config["config_version"] = 5
+    return True
 
 
 # Mumble's voice settings that are now the Codex runner's (realtime_voice).
@@ -212,16 +255,16 @@ def _migrate_voice_settings(config: dict[str, Any]) -> bool:
         runner["config"] = {}
     runner_config = runner["config"]
     changed = False
-    for platform in platforms:
-        if not isinstance(platform, dict) or not any(
-            key in platform for key in _MUMBLE_VOICE_KEYS
+    for platform_conf in platforms:
+        if not isinstance(platform_conf, dict) or not any(
+            key in platform_conf for key in _MUMBLE_VOICE_KEYS
         ):
             continue
         voice = runner_config.get("realtime_voice")
         if not isinstance(voice, dict):
             voice = runner_config["realtime_voice"] = {}
         if (
-            platform.get("mumble_voice_backend") == "local_cascade"
+            platform_conf.get("mumble_voice_backend") == "local_cascade"
             and voice.get("backend") != "local_infra"
         ):
             voice["backend"] = "local_infra"
@@ -232,16 +275,16 @@ def _migrate_voice_settings(config: dict[str, Any]) -> bool:
                 ("mumble_cascade_emotion", "emotion"),
                 ("mumble_cascade_emotion_strength", "emotion_strength"),
             ):
-                if platform.get(old) not in (None, ""):
-                    voice[new] = platform[old]
+                if platform_conf.get(old) not in (None, ""):
+                    voice[new] = platform_conf[old]
         for old, new in (
             ("mumble_voice_voice", "voice"),
             ("mumble_voice_model", "model"),
         ):
-            if platform.get(old) and not voice.get(new):
-                voice[new] = platform[old]
+            if platform_conf.get(old) and not voice.get(new):
+                voice[new] = platform_conf[old]
         for key in _MUMBLE_VOICE_KEYS:
-            platform.pop(key, None)
+            platform_conf.pop(key, None)
         changed = True
     if changed:
         logger.warning(

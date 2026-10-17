@@ -1,5 +1,6 @@
 """Tests for astr_main_agent module."""
 
+import asyncio
 import datetime
 import os
 from contextlib import nullcontext
@@ -20,7 +21,7 @@ from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.config.agent_runner import resolve_context_compression_config
 from astrbot.core.conversation_mgr import Conversation
 from astrbot.core.cron.manager import CronJobManager
-from astrbot.core.message.components import File, Image, Plain, Reply, Video
+from astrbot.core.message.components import File, Image, Plain, Record, Reply, Video
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.platform_metadata import PlatformMetadata
 from astrbot.core.provider import Provider
@@ -30,6 +31,16 @@ from astrbot.core.provider.manager import ProviderManager
 from astrbot.core.skills.skill_manager import SkillInfo
 from astrbot.core.star.context import Context
 from astrbot.core.star.star import StarMetadata
+
+
+@pytest.fixture
+def valid_image_path(tmp_path):
+    """Create a real image for builder tests that exercise provider selection."""
+    from PIL import Image as PILImage
+
+    path = tmp_path / "input.jpg"
+    PILImage.new("RGB", (8, 8), "red").save(path)
+    return str(path)
 
 
 @pytest.fixture
@@ -785,6 +796,29 @@ class TestBuiltinToolInjection:
     """Tests for builtin tool injection paths."""
 
     @pytest.mark.asyncio
+    async def test_serpapi_injects_all_search_tools(self, mock_event, mock_context):
+        """Verify all configured SerpApi tools reach the model request."""
+        req = ProviderRequest()
+        mock_context.get_config.return_value = {
+            "provider_settings": {"web_search": True, "websearch_provider": "serpapi"}
+        }
+
+        await ama._apply_web_search_tools(mock_event, req, mock_context)
+
+        assert req.func_tool.names() == [
+            "web_search_serpapi",
+            "image_search_serpapi",
+            "finance_search_serpapi",
+            "scholar_search_serpapi",
+        ]
+        assert isinstance(
+            req.func_tool.get_tool("web_search_serpapi"), ama.SerpApiWebSearchTool
+        )
+        assert isinstance(
+            req.func_tool.get_tool("image_search_serpapi"), ama.SerpApiImageSearchTool
+        )
+
+    @pytest.mark.asyncio
     async def test_apply_web_search_tools_uses_builtin_tool_manager(
         self, mock_event, mock_context
     ):
@@ -810,22 +844,48 @@ class TestBuiltinToolInjection:
         assert req.func_tool.get_tool("web_search_baidu") is builtin_tool
 
     @pytest.mark.asyncio
-    async def test_apply_web_search_tools_adds_firecrawl_search_and_extract_tools(
-        self, mock_event, mock_context
+    @pytest.mark.parametrize(
+        ("provider", "search_class", "extract_class", "search_name", "extract_name"),
+        [
+            (
+                "firecrawl",
+                ama.FirecrawlWebSearchTool,
+                ama.FirecrawlExtractWebPageTool,
+                "web_search_firecrawl",
+                "firecrawl_extract_web_page",
+            ),
+            (
+                "deepseek",
+                ama.DeepSeekWebSearchTool,
+                ama.DeepSeekFetchWebPageTool,
+                "web_search_deepseek",
+                "deepseek_fetch_web_page",
+            ),
+        ],
+    )
+    async def test_apply_web_search_tools_adds_search_and_extract_tools(
+        self,
+        mock_event,
+        mock_context,
+        provider,
+        search_class,
+        extract_class,
+        search_name,
+        extract_name,
     ):
-        """Test Firecrawl web search injects search and extract tools."""
+        """Test web search providers inject both search and extraction tools."""
         module = ama
         req = ProviderRequest()
         mock_context.get_config.return_value = {
             "provider_settings": {
                 "web_search": True,
-                "websearch_provider": "firecrawl",
+                "websearch_provider": provider,
             }
         }
         search_tool = MagicMock(spec=FunctionTool)
-        search_tool.name = "web_search_firecrawl"
+        search_tool.name = search_name
         extract_tool = MagicMock(spec=FunctionTool)
-        extract_tool.name = "firecrawl_extract_web_page"
+        extract_tool.name = extract_name
         tool_mgr = MagicMock()
         tool_mgr.get_builtin_tool.side_effect = [search_tool, extract_tool]
         mock_context.get_llm_tool_manager.return_value = tool_mgr
@@ -833,18 +893,29 @@ class TestBuiltinToolInjection:
         await module._apply_web_search_tools(mock_event, req, mock_context)
 
         assert tool_mgr.get_builtin_tool.call_args_list == [
-            ((module.FirecrawlWebSearchTool,),),
-            ((module.FirecrawlExtractWebPageTool,),),
+            ((search_class,),),
+            ((extract_class,),),
         ]
         assert req.func_tool is not None
-        assert req.func_tool.get_tool("web_search_firecrawl") is search_tool
-        assert req.func_tool.get_tool("firecrawl_extract_web_page") is extract_tool
+        assert req.func_tool.get_tool(search_name) is search_tool
+        assert req.func_tool.get_tool(extract_name) is extract_tool
 
-    def test_apply_web_search_citation_prompt_for_webchat(self, mock_event):
+    @pytest.mark.parametrize(
+        "tool_name",
+        [
+            "web_search_tavily",
+            "web_search_deepseek",
+            "web_search_serpapi",
+            "image_search_serpapi",
+            "finance_search_serpapi",
+            "scholar_search_serpapi",
+        ],
+    )
+    def test_apply_web_search_citation_prompt_for_webchat(self, mock_event, tool_name):
         module = ama
         req = ProviderRequest(system_prompt="base")
         search_tool = MagicMock(spec=FunctionTool)
-        search_tool.name = "web_search_tavily"
+        search_tool.name = tool_name
         req.func_tool = ToolSet()
         req.func_tool.add_tool(search_tool)
         mock_event.get_platform_name.return_value = "webchat"
@@ -1197,6 +1268,128 @@ class TestEnsurePersonaAndSkills:
         )
 
     @pytest.mark.asyncio
+    async def test_webchat_implicit_default_injects_chatui_prompt(
+        self, mock_event, mock_context
+    ):
+        """WebChat implicit default uses the ChatUI prompt, not the DB persona."""
+        module = ama
+        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
+            return_value=("_chatui_default_", None, None, True)
+        )
+        mock_event.get_platform_name.return_value = "webchat"
+        mock_event.get_extra.side_effect = lambda key: {
+            "enable_inline_genui": False,
+            "enable_default_system_prompt": True,
+        }.get(key)
+        req = ProviderRequest()
+        req.conversation = MagicMock(persona_id=None)
+
+        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
+
+        context = _dynamic_context_text(req)
+        assert module.CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT in context
+        assert "Persona Instructions" not in context
+
+    @pytest.mark.asyncio
+    async def test_non_webchat_implicit_default_injects_db_persona(
+        self, mock_event, mock_context
+    ):
+        """Non-WebChat implicit default injects the editable DB default persona."""
+        module = ama
+        persona = {"name": "default", "prompt": "EDITED DEFAULT"}
+        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
+            return_value=("default", persona, None, False)
+        )
+        mock_event.get_extra.side_effect = lambda key: None
+        req = ProviderRequest()
+        req.conversation = MagicMock(persona_id=None)
+
+        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
+
+        context = _dynamic_context_text(req)
+        assert "EDITED DEFAULT" in context
+        assert module.CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT not in context
+
+    @pytest.mark.asyncio
+    async def test_explicit_default_persona_ignores_default_system_prompt_flag(
+        self, mock_event, mock_context
+    ):
+        """Explicitly selecting the default persona uses the record even when the flag is off."""
+        module = ama
+        persona = {"name": "default", "prompt": "EDITED DEFAULT"}
+        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
+            return_value=("default", persona, None, False)
+        )
+        mock_event.get_platform_name.return_value = "webchat"
+        mock_event.get_extra.side_effect = lambda key: {
+            "enable_inline_genui": False,
+            "enable_default_system_prompt": False,
+        }.get(key)
+        req = ProviderRequest()
+        req.conversation = MagicMock(persona_id="default")
+
+        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
+
+        context = _dynamic_context_text(req)
+        assert "EDITED DEFAULT" in context
+        assert module.CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT not in context
+
+    @pytest.mark.asyncio
+    async def test_webchat_implicit_default_regression_with_real_persona_manager(
+        self, mock_event, mock_context
+    ):
+        """A seeded system default must not swallow the WebChat ChatUI prompt."""
+        from astrbot.core import persona_mgr as pm
+        from astrbot.core.db.po import Persona
+
+        module = ama
+        conf = {
+            "agent_runner": {
+                "runner_type": "local",
+                "config": {"persona": {"persona_id": "default"}},
+            },
+            "provider_settings": {},
+        }
+        acm = MagicMock()
+        acm.default_conf = conf
+        acm.get_conf.return_value = conf
+
+        db = MagicMock()
+        db.get_personas = AsyncMock(
+            return_value=[
+                Persona(
+                    persona_id="default",
+                    system_prompt="EDITED DEFAULT",
+                    begin_dialogs=[],
+                    tools=None,
+                    skills=None,
+                    custom_error_message=None,
+                    folder_id=None,
+                    sort_order=0,
+                )
+            ]
+        )
+        db.insert_persona = AsyncMock()
+        manager = pm.PersonaManager(db_helper=db, acm=acm)
+        await manager.initialize()
+        mock_context.persona_manager = manager
+
+        mock_event.get_platform_name.return_value = "webchat"
+        mock_event.get_extra.side_effect = lambda key: {
+            "enable_inline_genui": False,
+            "enable_default_system_prompt": True,
+        }.get(key)
+        req = ProviderRequest()
+        req.conversation = MagicMock(persona_id=None)
+
+        with patch.object(pm.sp, "get_async", new=AsyncMock(return_value={})):
+            await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
+
+        context = _dynamic_context_text(req)
+        assert module.CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT in context
+        assert "EDITED DEFAULT" not in context
+
+    @pytest.mark.asyncio
     async def test_ensure_persona_none_explicit(self, mock_event, mock_context):
         """Test that [%None] persona is explicitly set to no persona."""
         module = ama
@@ -1484,8 +1677,23 @@ class TestEnsurePersonaAndSkills:
         assert req.func_tool.names() == ["mcp_tool"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("provider", "tool_names"),
+        [
+            ("baidu_ai_search", ["web_search_baidu"]),
+            (
+                "serpapi",
+                [
+                    "web_search_serpapi",
+                    "image_search_serpapi",
+                    "finance_search_serpapi",
+                    "scholar_search_serpapi",
+                ],
+            ),
+        ],
+    )
     async def test_persona_empty_tools_keeps_late_builtin_tools(
-        self, mock_event, mock_context, mock_provider
+        self, mock_event, mock_context, mock_provider, provider, tool_names
     ):
         module = ama
         persona = {"name": "locked", "prompt": "No tools.", "tools": []}
@@ -1496,14 +1704,14 @@ class TestEnsurePersonaAndSkills:
         mock_context.get_config.return_value = {
             "provider_settings": {
                 "web_search": True,
-                "websearch_provider": "baidu_ai_search",
+                "websearch_provider": provider,
             }
         }
         config = module.MainAgentBuildConfig(
             tool_call_timeout=60,
             provider_settings={
                 "web_search": True,
-                "websearch_provider": "baidu_ai_search",
+                "websearch_provider": provider,
             },
             computer_use_runtime="none",
             add_cron_tools=False,
@@ -1530,21 +1738,52 @@ class TestEnsurePersonaAndSkills:
         assert result is not None
         try:
             assert result.provider_request.func_tool is not None
-            assert result.provider_request.func_tool.names() == ["web_search_baidu"]
+            assert result.provider_request.func_tool.names() == tool_names
         finally:
             if result.reset_coro:
                 result.reset_coro.close()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("role", ["admin", "member"])
+    @pytest.mark.parametrize("isolation_status", ["detected", "missing", "unavailable", "unsupported"])
+    @pytest.mark.parametrize(
+        ("allow_execution", "allow_network"),
+        [(True, False), (True, True), (False, False)],
+    )
     async def test_persona_empty_tools_keeps_local_runtime_builtin_tools(
-        self, mock_event, mock_context, mock_provider
+        self,
+        monkeypatch,
+        mock_event,
+        mock_context,
+        mock_provider,
+        role,
+        allow_execution,
+        allow_network,
+        isolation_status,
     ):
+        monkeypatch.setattr(
+            "astrbot.core.tools.computer_tools.util.get_process_sandbox_status",
+            lambda: {"status": isolation_status},
+        )
         module = ama
         persona = {"name": "locked", "prompt": "No tools.", "tools": []}
         mock_context.persona_manager.resolve_selected_persona = AsyncMock(
             return_value=("locked", persona, None, False)
         )
         mock_event.platform_meta.support_proactive_message = False
+        mock_event.role = role
+        mock_context.get_config.return_value = {
+            "provider_settings": {
+                "computer_use_runtime": "local",
+                "computer_use_local_permissions": {
+                    role: {
+                        "allow_execution": allow_execution,
+                        "allow_network": allow_network,
+                        "filesystem_scope": "workspace",
+                    }
+                },
+            }
+        }
         config = module.MainAgentBuildConfig(
             tool_call_timeout=60,
             computer_use_runtime="local",
@@ -1555,7 +1794,10 @@ class TestEnsurePersonaAndSkills:
 
         with (
             patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
-            patch("astrbot.core.astr_main_agent.AstrAgentContext"),
+            patch(
+                "astrbot.core.astr_main_agent.AstrAgentContext",
+                return_value=SimpleNamespace(context=mock_context, event=mock_event),
+            ),
         ):
             mock_runner = MagicMock()
             mock_runner.reset = AsyncMock()
@@ -1582,6 +1824,11 @@ class TestEnsurePersonaAndSkills:
             assert shell_tool is not None
             assert "background" not in shell_tool.parameters["properties"]
             assert "yield_time_ms" in shell_tool.parameters["properties"]
+            assert result.provider_request.system_prompt.count(
+                module.LOCAL_NETWORK_POLICY_NOTICE
+            ) == int(allow_execution and not allow_network and isolation_status == "detected")
+            assert "The Agent Computer Use runtime is the local environment" not in result.provider_request.system_prompt
+            assert "These restrictions require Local process isolation" not in result.provider_request.system_prompt
         finally:
             if result.reset_coro:
                 result.reset_coro.close()
@@ -1989,14 +2236,14 @@ class TestBuildMainAgent:
         quoted,
         compression_enabled,
     ):
-        """Direct builders keep raw attachments regardless of pipeline settings."""
+        """Direct builders prepare both ordinary and quoted images before reset."""
 
         from PIL import Image as PILImage
 
-        from astrbot.core.utils import media_utils
+        from astrbot.core.utils import image_input
 
         module = ama
-        monkeypatch.setattr(media_utils, "get_astrbot_temp_path", lambda: str(tmp_path))
+        monkeypatch.setattr(image_input, "get_astrbot_temp_path", lambda: str(tmp_path))
         source_path = tmp_path / "image.jpg"
         PILImage.new("RGB", (8, 8), (255, 0, 0)).save(source_path)
         original = source_path.read_bytes()
@@ -2027,23 +2274,23 @@ class TestBuildMainAgent:
                     tool_call_timeout=60,
                     provider_settings={
                         "image_compress_enabled": compression_enabled,
-                        "image_compress_options": {"max_size": 2},
+                        "image_compress_options": {"max_size": 4},
                     },
                 ),
             )
 
         assert result is not None
         request = result.provider_request
-        label = "Image Attachment in quoted message" if quoted else "Image Attachment"
-        assert f"[{label}: path {source_path}]" in [
+        label = "Image 1 in quoted message" if quoted else "Image 1"
+        assert f"[{label}: original path {source_path}]" in [
             part.text for part in request.extra_user_content_parts
         ]
         assert len(request.image_urls) == 1
         visual_path = Path(request.image_urls[0])
-        assert visual_path == source_path
+        assert visual_path != source_path
         with PILImage.open(visual_path) as visual_image:
-            assert visual_image.size == (8, 8)
-        mock_event.track_temporary_local_file.assert_not_called()
+            assert visual_image.size == (4, 4)
+        mock_event.track_temporary_local_file.assert_called_once_with(str(visual_path))
         mock_event.untrack_temporary_local_file.assert_called_once_with(
             str(source_path)
         )
@@ -2059,11 +2306,11 @@ class TestBuildMainAgent:
 
     @pytest.mark.asyncio
     async def test_build_main_agent_skips_caption_when_main_provider_supports_images(
-        self, mock_event, mock_context, mock_provider
+        self, mock_event, mock_context, mock_provider, valid_image_path
     ):
         """Test image-capable chat providers receive quoted images directly."""
         module = ama
-        mock_image = Image(file="file:///tmp/quoted.jpg")
+        mock_image = Image(file=Path(valid_image_path).as_uri())
         mock_reply = Reply(
             id="reply-1",
             chain=[Plain(text="quoted text"), mock_image],
@@ -2085,7 +2332,7 @@ class TestBuildMainAgent:
             patch.object(
                 Image,
                 "convert_to_file_path",
-                AsyncMock(return_value="/tmp/quoted.jpg"),
+                AsyncMock(return_value=valid_image_path),
             ),
         ):
             mock_runner = MagicMock()
@@ -2105,7 +2352,7 @@ class TestBuildMainAgent:
             )
 
         assert result is not None
-        assert result.provider_request.image_urls == ["/tmp/quoted.jpg"]
+        assert result.provider_request.image_urls == [valid_image_path]
         assert not any(
             "Image Caption" in part.text or "<image_caption>" in part.text
             for part in result.provider_request.extra_user_content_parts
@@ -2114,7 +2361,7 @@ class TestBuildMainAgent:
 
     @pytest.mark.asyncio
     async def test_build_main_agent_does_not_caption_quoted_image_twice(
-        self, mock_event, mock_context
+        self, mock_event, mock_context, valid_image_path
     ):
         """Quoted images should not be captioned again after request image captioning."""
         module = ama
@@ -2132,7 +2379,10 @@ class TestBuildMainAgent:
 
         mock_reply = Reply(
             id="reply-1",
-            chain=[Plain(text="quoted text"), Image(file="file:///tmp/quoted.jpg")],
+            chain=[
+                Plain(text="quoted text"),
+                Image(file=Path(valid_image_path).as_uri()),
+            ],
             sender_nickname="Alice",
             message_str="quoted text",
         )
@@ -2151,7 +2401,7 @@ class TestBuildMainAgent:
             patch.object(
                 Image,
                 "convert_to_file_path",
-                AsyncMock(return_value="/tmp/quoted.jpg"),
+                AsyncMock(return_value=valid_image_path),
             ),
         ):
             mock_runner = MagicMock()
@@ -2181,7 +2431,7 @@ class TestBuildMainAgent:
 
     @pytest.mark.asyncio
     async def test_build_main_agent_does_not_retry_quoted_image_caption_when_empty(
-        self, mock_event, mock_context
+        self, mock_event, mock_context, valid_image_path
     ):
         """Quoted images already sent to image captioning should not be retried."""
         module = ama
@@ -2199,7 +2449,10 @@ class TestBuildMainAgent:
 
         mock_reply = Reply(
             id="reply-1",
-            chain=[Plain(text="quoted text"), Image(file="file:///tmp/quoted.jpg")],
+            chain=[
+                Plain(text="quoted text"),
+                Image(file=Path(valid_image_path).as_uri()),
+            ],
             sender_nickname="Alice",
             message_str="quoted text",
         )
@@ -2218,7 +2471,7 @@ class TestBuildMainAgent:
             patch.object(
                 Image,
                 "convert_to_file_path",
-                AsyncMock(return_value="/tmp/quoted.jpg"),
+                AsyncMock(return_value=valid_image_path),
             ),
         ):
             mock_runner = MagicMock()
@@ -2248,7 +2501,7 @@ class TestBuildMainAgent:
 
     @pytest.mark.asyncio
     async def test_build_main_agent_uses_image_fallback_provider(
-        self, mock_event, mock_context
+        self, mock_event, mock_context, valid_image_path
     ):
         """Test image requests use a fallback provider that supports images."""
         module = ama
@@ -2270,7 +2523,7 @@ class TestBuildMainAgent:
 
         req = ProviderRequest(
             prompt="describe this",
-            image_urls=["/tmp/image.jpg"],
+            image_urls=[valid_image_path],
             model="text-model",
         )
         mock_context.get_provider_by_id.side_effect = lambda provider_id: (
@@ -2302,14 +2555,14 @@ class TestBuildMainAgent:
 
         assert result is not None
         assert result.provider is image_provider
-        assert result.provider_request.image_urls == ["/tmp/image.jpg"]
+        assert result.provider_request.image_urls == [valid_image_path]
         assert result.provider_request.model is None
         assert mock_runner.reset.call_args.kwargs["provider"] is image_provider
         assert mock_runner.reset.call_args.kwargs["fallback_providers"] == []
 
     @pytest.mark.asyncio
     async def test_build_main_agent_keeps_text_provider_without_image_fallback(
-        self, mock_event, mock_context
+        self, mock_event, mock_context, valid_image_path
     ):
         """Test image requests fall back to existing sanitizing when no image provider exists."""
         module = ama
@@ -2323,7 +2576,7 @@ class TestBuildMainAgent:
 
         req = ProviderRequest(
             prompt="describe this",
-            image_urls=["/tmp/image.jpg"],
+            image_urls=[valid_image_path],
         )
         mock_context.get_provider_by_id.return_value = None
         mock_context.get_config.return_value = {}
@@ -2354,7 +2607,7 @@ class TestBuildMainAgent:
 
         assert result is not None
         assert result.provider is text_provider
-        assert result.provider_request.image_urls == ["/tmp/image.jpg"]
+        assert result.provider_request.image_urls == [valid_image_path]
         assert mock_runner.reset.call_args.kwargs["provider"] is text_provider
 
     @pytest.mark.asyncio
@@ -2502,6 +2755,164 @@ class TestBuildMainAgent:
             "Error processing quoted video attachment" in call[0][0]
             for call in mock_logger.error.call_args_list
         )
+
+    @pytest.mark.asyncio
+    async def test_build_main_agent_with_voice_attachments(
+        self, mock_event, mock_context, mock_provider
+    ):
+        """Test that resolvable voice attachments keep their local paths."""
+        module = ama
+        direct_path = str(Path("/path/to/voice.wav"))
+        quoted_path = str(Path("/path/to/quoted.wav"))
+        mock_record = Record(file="direct.amr")
+        mock_quoted_record = Record(file="quoted.amr")
+        mock_reply = Reply(
+            id="reply-1",
+            chain=[mock_quoted_record],
+            sender_nickname="",
+            message_str="quoted message",
+        )
+        mock_event.message_obj.message = [mock_record, mock_reply]
+
+        mock_context.get_provider_by_id.return_value = None
+        mock_context.get_using_provider.return_value = mock_provider
+        mock_context.get_config.return_value = {}
+
+        conv_mgr = mock_context.conversation_manager
+        _setup_conversation_for_build(conv_mgr)
+
+        async def _resolve_voice(self):
+            return quoted_path if self.file == "quoted.amr" else direct_path
+
+        with (
+            patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
+            patch("astrbot.core.astr_main_agent.AstrAgentContext"),
+            patch.object(
+                Record,
+                "convert_to_file_path",
+                _resolve_voice,
+            ),
+        ):
+            mock_runner = MagicMock()
+            mock_runner.reset = AsyncMock()
+            mock_runner_cls.return_value = mock_runner
+
+            result = await module.build_main_agent(
+                event=mock_event,
+                plugin_context=mock_context,
+                config=module.MainAgentBuildConfig(tool_call_timeout=60),
+            )
+
+        assert result is not None
+        assert result.provider_request.audio_urls == [direct_path, quoted_path]
+        extra_texts = [
+            part.text for part in result.provider_request.extra_user_content_parts
+        ]
+        assert f"[Audio Attachment: path {direct_path}]" in extra_texts
+        assert (
+            f"[Audio Attachment in quoted message: path {quoted_path}]" in extra_texts
+        )
+        assert "[Voice unavailable]" not in extra_texts
+
+    @pytest.mark.asyncio
+    async def test_build_main_agent_skips_unavailable_voice_attachments(
+        self, mock_event, mock_context, mock_provider
+    ):
+        """Unresolvable voice attachments degrade instead of failing the turn.
+
+        Both the current message and the quoted chain raise a bare ``Exception``,
+        which ``is_recoverable_image_error`` rejects, so the branches must degrade
+        unconditionally rather than re-raise.
+        """
+        module = ama
+        mock_record = Record(file="")
+        mock_quoted_record = Record(file="")
+        mock_reply = Reply(
+            id="reply-1",
+            chain=[Plain(text="quoted text"), mock_quoted_record],
+            sender_nickname="",
+            message_str="quoted text",
+        )
+        mock_event.message_obj.message = [Plain(text="Hello"), mock_reply, mock_record]
+
+        mock_context.get_provider_by_id.return_value = None
+        mock_context.get_using_provider.return_value = mock_provider
+        mock_context.get_config.return_value = {}
+
+        conv_mgr = mock_context.conversation_manager
+        _setup_conversation_for_build(conv_mgr)
+
+        async def _raise_unavailable_voice(self):
+            raise Exception(f"not a valid file: {self.file}")
+
+        with (
+            patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
+            patch("astrbot.core.astr_main_agent.AstrAgentContext"),
+            patch.object(
+                Record,
+                "convert_to_file_path",
+                _raise_unavailable_voice,
+            ),
+        ):
+            mock_runner = MagicMock()
+            mock_runner.reset = AsyncMock()
+            mock_runner_cls.return_value = mock_runner
+
+            result = await module.build_main_agent(
+                event=mock_event,
+                plugin_context=mock_context,
+                config=module.MainAgentBuildConfig(tool_call_timeout=60),
+            )
+
+        assert result is not None
+        assert result.provider_request.audio_urls == []
+        extra_texts = [
+            part.text for part in result.provider_request.extra_user_content_parts
+        ]
+        assert extra_texts.count("[Voice unavailable]") == 2
+        assert not any("Audio Attachment" in part for part in extra_texts)
+
+    @pytest.mark.asyncio
+    async def test_build_main_agent_propagates_voice_cancellation(
+        self, mock_event, mock_context, mock_provider
+    ):
+        """Cancellation must not be swallowed by the voice degrade path."""
+        module = ama
+        mock_quoted_record = Record(file="quoted.amr")
+        mock_reply = Reply(
+            id="reply-1",
+            chain=[mock_quoted_record],
+            sender_nickname="",
+            message_str="quoted message",
+        )
+        mock_event.message_obj.message = [Plain(text="Hello"), mock_reply]
+
+        mock_context.get_provider_by_id.return_value = None
+        mock_context.get_using_provider.return_value = mock_provider
+        mock_context.get_config.return_value = {}
+
+        conv_mgr = mock_context.conversation_manager
+        _setup_conversation_for_build(conv_mgr)
+
+        with (
+            patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
+            patch("astrbot.core.astr_main_agent.AstrAgentContext"),
+            patch.object(
+                Record,
+                "convert_to_file_path",
+                AsyncMock(side_effect=asyncio.CancelledError),
+            ),
+        ):
+            mock_runner = MagicMock()
+            mock_runner.reset = AsyncMock()
+            mock_runner_cls.return_value = mock_runner
+
+            with pytest.raises(asyncio.CancelledError):
+                await module.build_main_agent(
+                    event=mock_event,
+                    plugin_context=mock_context,
+                    config=module.MainAgentBuildConfig(tool_call_timeout=60),
+                )
 
     @pytest.mark.asyncio
     async def test_build_main_agent_no_prompt_no_images(

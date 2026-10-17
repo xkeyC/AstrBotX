@@ -245,6 +245,14 @@ class CronJobManager:
         return job
 
     async def update_job(self, job_id: str, **kwargs) -> CronJob | None:
+        current_job = await self.db.get_cron_job(job_id)
+        if not current_job:
+            return None
+        candidate = current_job.model_copy(update=kwargs)
+        if candidate.enabled:
+            # Invalid edits must not overwrite the durable job or remove its
+            # working schedule. Disabled legacy jobs can still be corrected.
+            self._build_trigger(candidate)
         job = await self.db.update_cron_job(job_id, **kwargs)
         if not job:
             return None
@@ -265,10 +273,18 @@ class CronJobManager:
         if self.scheduler.get_job(job_id):
             self.scheduler.remove_job(job_id)
 
-    def _schedule_job(self, job: CronJob) -> None:
-        if not self._started:
-            self.scheduler.start()
-            self._started = True
+    def _build_trigger(self, job: CronJob) -> CronTrigger | DateTrigger:
+        """Validate a job's timing without modifying stored or scheduled jobs.
+
+        Args:
+            job: Candidate job definition, including one-shot payload fields.
+
+        Returns:
+            A trigger using the same timezone and weekday rules as scheduling.
+
+        Raises:
+            CronJobSchedulingError: If the schedule cannot be parsed.
+        """
         try:
             tzinfo = None
             if job.timezone:
@@ -307,13 +323,24 @@ class CronJobManager:
                 trigger = CronTrigger.from_crontab(
                     normalized_cron_expression, timezone=tzinfo
                 )
+            return trigger
+        except (ValueError, TypeError) as e:
+            logger.exception("Failed to build trigger for cron job %s", job.job_id)
+            raise CronJobSchedulingError(str(e)) from e
+
+    def _schedule_job(self, job: CronJob) -> None:
+        if not self._started:
+            self.scheduler.start()
+            self._started = True
+        try:
+            trigger = self._build_trigger(job)
             self.scheduler.add_job(
                 self._run_job,
                 id=job.job_id,
                 trigger=trigger,
                 args=[job.job_id],
                 replace_existing=True,
-                misfire_grace_time=30,
+                misfire_grace_time=300,
             )
             asyncio.create_task(
                 self.db.update_cron_job(
@@ -464,6 +491,7 @@ class CronJobManager:
         )
         from astrbot.core.astr_main_agent_resources import (
             PROACTIVE_AGENT_CRON_WOKE_SYSTEM_PROMPT,
+            PROACTIVE_AGENT_CRON_WOKE_USER_PROMPT,
         )
         from astrbot.core.tools.message_tools import SendMessageToUserTool
 
@@ -488,6 +516,10 @@ class CronJobManager:
         # judge user's role
         umo = cron_event.unified_msg_origin
         cfg = self.ctx.get_config(umo=umo)
+        enabled_plugins_name = cfg.get("plugin_set", ["*"])
+        cron_event.plugins_name = (
+            None if enabled_plugins_name == ["*"] else enabled_plugins_name
+        )
         cron_payload = extras.get("cron_payload", {}) if extras else {}
         sender_id = cron_payload.get("sender_id")
         admin_ids = cfg.get("admins_id", [])
@@ -510,8 +542,8 @@ class CronJobManager:
             cfg.get("agent_runner", {})
             .get("config", {})
             .get("misc", {})
-            .get("max_steps", 30),
-            default=30,
+            .get("max_steps", 128),
+            default=128,
             min_value=1,
             field_name="agent_runner.config.misc.max_steps",
         )
@@ -540,16 +572,9 @@ class CronJobManager:
         # prefix the interactive agent sends, so the prompt cache is reused.
         req.contexts = json.loads(conv.history)
         cron_job_str = json.dumps(extras.get("cron_job", {}), ensure_ascii=False)
-        req.add_temporary_context(
-            "cron_task",
-            PROACTIVE_AGENT_CRON_WOKE_SYSTEM_PROMPT.format(cron_job=cron_job_str),
-        )
-        req.prompt = (
-            "You are now responding to a scheduled task. "
-            "Proceed according to your system instructions. "
-            "Output using same language as previous conversation. "
-            "After completing your task, summarize and output your actions and results."
-        )
+        req.add_temporary_context("cron_task", PROACTIVE_AGENT_CRON_WOKE_SYSTEM_PROMPT)
+        # Keep per-run metadata after history so it does not invalidate its cache.
+        req.prompt = PROACTIVE_AGENT_CRON_WOKE_USER_PROMPT.format(cron_job=cron_job_str)
         if delivery_session_str:
             if not req.func_tool:
                 req.func_tool = ToolSet()

@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import json
 from dataclasses import dataclass
@@ -11,8 +12,10 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, PlainTextResponse
+from PIL import Image as PILImage
 
 import astrbot.dashboard.services.config_service as config_service
+import astrbot.dashboard.services.stat_service as stat_service
 from astrbot.core import file_token_service
 from astrbot.core.utils import llm_metadata
 from astrbot.dashboard.api.app import create_dashboard_asgi_app
@@ -1053,6 +1056,89 @@ def _jwt_headers() -> dict[str, str]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("desktop_auth", [False, True])
+@pytest.mark.parametrize("status", ["missing", "unavailable", "detected"])
+async def test_version_routes_return_startup_runtime_snapshot(
+    monkeypatch, tmp_path, fake_core_lifecycle, fake_db: FakeDb, desktop_auth, status
+):
+    """Both version routes and auth modes expose the same startup snapshot."""
+    platform = SimpleNamespace(
+        system=Mock(return_value="Linux"), machine=Mock(return_value="aarch64")
+    )
+    from astrbot.core.computer import process_sandbox
+
+    process_sandbox.get_process_sandbox_status.cache_clear()
+    monkeypatch.setattr(process_sandbox, "platform", platform)
+    which = Mock(return_value=None if status == "missing" else "/usr/bin/bwrap")
+    monkeypatch.setattr(stat_service, "platform", platform)
+    monkeypatch.setattr(process_sandbox, "shutil", SimpleNamespace(which=which))
+    error = "bwrap: setting up uid map: Permission denied"
+    sandbox = Mock()
+    sandbox.run.return_value = SimpleNamespace(
+        returncode=1 if status == "unavailable" else 0, stderr=error.encode()
+    )
+    factory = Mock(return_value=sandbox)
+    monkeypatch.setattr(process_sandbox, "create_process_sandbox", factory)
+    monkeypatch.setattr(process_sandbox, "get_astrbot_temp_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        stat_service, "is_desktop_session_auth_enabled", lambda: desktop_auth
+    )
+    monkeypatch.setattr(
+        stat_service, "get_dashboard_version", AsyncMock(return_value="v1.2.3")
+    )
+    monkeypatch.setattr(
+        stat_service, "is_password_storage_upgraded", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        stat_service,
+        "get_dashboard_password_hash",
+        lambda *args, **kwargs: "stored-hash",
+    )
+    monkeypatch.setattr(
+        stat_service.StatService, "is_default_cred", AsyncMock(return_value=False)
+    )
+    app = create_dashboard_asgi_app(
+        core_lifecycle=fake_core_lifecycle, db=fake_db, jwt_secret=JWT_SECRET
+    )
+
+    # Environment changes take effect in this snapshot after restarting AstrBot.
+    which.return_value = "/usr/bin/bwrap"
+    sandbox.run.return_value.returncode = 0
+    expected_sandbox = {"backend": "bubblewrap", "status": status}
+    if status == "unavailable":
+        expected_sandbox["error"] = error
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        for path in ("/api/v1/stats/version", "/api/stat/version"):
+            response = await client.get(path, headers=_jwt_headers())
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["status"] == "ok"
+            assert payload["data"]["runtime"] == {
+                "os": "linux",
+                "arch": "aarch64",
+                "sandbox": expected_sandbox,
+            }
+            assert payload["data"]["version"]
+            assert payload["data"]["dashboard_version"] == "v1.2.3"
+            assert payload["data"]["change_pwd_hint"] is False
+            assert payload["data"]["md5_pwd_hint"] is False
+            assert payload["data"]["password_upgrade_required"] is False
+
+        response = await client.get("/api/v1/stats/versions")
+        assert response.status_code == 200
+        assert "runtime" not in response.json()["data"]
+
+    which.assert_called_once_with("bwrap")
+    assert platform.system.call_count == 2
+    platform.machine.assert_called_once_with()
+    assert factory.call_count == (0 if status == "missing" else 1)
+    process_sandbox.get_process_sandbox_status.cache_clear()
+
+
+@pytest.mark.asyncio
 async def test_public_versions_route_uses_static_folder(
     fake_core_lifecycle,
     fake_db: FakeDb,
@@ -1697,7 +1783,9 @@ async def test_v1_system_config_update_preserves_independent_bot_provider_sectio
     fake_core_lifecycle,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    def fake_save_config(post_config: dict, config: FakeAstrBotConfig, is_core=False):
+    def fake_save_config(
+        post_config: dict, config: FakeAstrBotConfig, is_core=False, *, runtime=None
+    ):
         config.save_config(post_config)
 
     monkeypatch.setattr(config_service, "save_config", fake_save_config)
@@ -1730,6 +1818,203 @@ async def test_v1_system_config_update_preserves_independent_bot_provider_sectio
     assert fake_core_lifecycle.astrbot_config["provider_settings"] == {
         "default_provider_id": "gpt-mini"
     }
+    assert fake_core_lifecycle.reloaded_config_ids == ["default"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["member_execution", "admin_removal"])
+async def test_config_update_revokes_only_affected_shell_sessions(
+    asgi_app, fake_core_lifecycle, monkeypatch, tmp_path, change
+):
+    from astrbot.core.computer import computer_client
+    from astrbot.core.computer.booters.local import LocalBooter
+    from astrbot.core.tools.computer_tools import shell as shell_tools
+
+    config = fake_core_lifecycle.astrbot_config
+    config["admins_id"] = ["creator", "other-admin"]
+    config["agent_runner"] = {"runner_type": "local"}
+    config["provider_settings"] = {
+        "computer_use_runtime": "local",
+        "computer_use_local_permissions": {
+            role: {
+                "allow_execution": True,
+                "allow_network": True,
+                "filesystem_scope": "host",
+            }
+            for role in ("admin", "member")
+        },
+    }
+    other_config = copy.deepcopy(config)
+    booter = LocalBooter()
+    monkeypatch.setattr(computer_client, "local_booter", booter)
+    monkeypatch.setattr(
+        shell_tools, "workspace_root_for_context", AsyncMock(return_value=tmp_path)
+    )
+    sessions = []
+    try:
+        for role, profile, sender_id in (
+            ("member", config, "member"),
+            ("admin", config, "creator"),
+            ("admin", other_config, "creator"),
+            ("admin", config, "other-admin"),
+        ):
+            context = SimpleNamespace(
+                context=SimpleNamespace(
+                    context=SimpleNamespace(get_config=lambda umo, p=profile: p),
+                    event=SimpleNamespace(
+                        role=role,
+                        unified_msg_origin="test:friend:revocation",
+                        get_sender_id=lambda sender_id=sender_id: sender_id,
+                    ),
+                )
+            )
+            result = json.loads(
+                await shell_tools.LocalExecuteShellTool().call(
+                    context, command='python -u -c "input()"', yield_time_ms=0
+                )
+            )
+            sessions.append(booter.shell._sessions[result["session_id"]])
+            if profile is config and sender_id == "creator":
+                admin_context = context
+
+        service = asgi_app.state.services.config_profiles
+        payload = copy.deepcopy(config)
+        payload["wake_prefix"] = ["changed"]
+        await service.update_profile("default", payload)
+        assert all(session.process.returncode is None for session in sessions)
+
+        payload = copy.deepcopy(config)
+        if change == "admin_removal":
+            payload["admins_id"] = ["other-admin"]
+            revoked_index = 1
+        else:
+            payload["provider_settings"]["computer_use_local_permissions"]["member"][
+                "allow_execution"
+            ] = False
+            revoked_index = 0
+        await service.update_profile("default", payload)
+        assert sessions[revoked_index].process.returncode is not None
+        assert all(
+            session.process.returncode is None
+            for index, session in enumerate(sessions)
+            if index != revoked_index
+        )
+        assert sessions[revoked_index].session_id not in booter.shell._sessions
+        if change == "admin_removal":
+            assert admin_context.context.event.role == "admin"
+            result = await shell_tools.LocalExecuteShellTool().call(
+                admin_context, command="echo unexpected", yield_time_ms=0
+            )
+            assert "permissions changed" in result
+            assert len(booter.shell._sessions) == 3
+
+        # Pre-upgrade sessions must not acquire a grant from the current config.
+        sessions[2].permission_check = None
+        payload = copy.deepcopy(config)
+        payload["provider_settings"]["computer_use_runtime"] = "none"
+        await service.update_profile("default", payload)
+        assert all(session.process.returncode is not None for session in sessions)
+        assert not booter.shell._sessions
+    finally:
+        await booter.shell.shutdown_sessions()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["workspace", "host"])
+@pytest.mark.parametrize(
+    ("system", "backend", "status", "reason"),
+    [
+        ("windows", None, "unsupported", "windows"),
+        ("linux", "bubblewrap", "missing", "bwrap"),
+        ("darwin", "seatbelt", "missing", "sandbox-exec"),
+        ("linux", "bubblewrap", "unavailable", "setting up uid map: Permission denied"),
+        ("darwin", "seatbelt", "unavailable", "sandbox_apply: Operation not permitted"),
+    ],
+)
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/system-config",
+        "/api/v1/config-profiles/default",
+        "/api/config/astrbot/update",
+    ],
+)
+async def test_config_api_saves_local_permissions_without_isolation(
+    asgi_app,
+    asgi_client,
+    fake_core_lifecycle,
+    path,
+    scope,
+    system,
+    backend,
+    status,
+    reason,
+):
+    runtime = asgi_app.state.services.stats.runtime
+    assert asgi_app.state.services.config_profiles.runtime is runtime
+    runtime.update({"os": system, "sandbox": {"backend": backend, "status": status}})
+    if status == "unavailable":
+        runtime["sandbox"]["error"] = reason
+    original = copy.deepcopy(fake_core_lifecycle.astrbot_config)
+    payload = copy.deepcopy(original)
+    payload["agent_runner"] = {"runner_type": "local"}
+    payload["provider_settings"] = {
+        "computer_use_runtime": "local",
+        "computer_use_local_permissions": {
+            "member": {
+                "filesystem_scope": scope,
+                "allow_execution": True,
+                "allow_network": True,
+            },
+            "admin": {"filesystem_scope": "none"},
+        },
+    }
+    legacy = path.startswith("/api/config/")
+    response = await asgi_client.request(
+        "POST" if legacy else "PUT",
+        path,
+        headers=_jwt_headers(),
+        json={"conf_id": "default", "config": payload} if legacy else payload,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    payload["provider_settings"]["computer_use_local_permissions"]["admin"].update(
+        allow_execution=False, allow_network=False
+    )
+    assert (
+        fake_core_lifecycle.astrbot_config["provider_settings"]
+        == payload["provider_settings"]
+    )
+    assert fake_core_lifecycle.reloaded_config_ids == ["default"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["missing", "unavailable", "unsupported"])
+async def test_welcome_page_can_enable_local_computer_access_without_isolation(
+    asgi_app, asgi_client, fake_core_lifecycle, status
+):
+    """Welcome setup only changes the runtime and retains default permissions."""
+    from astrbot.core.config.default import get_local_permission_defaults
+
+    runtime = asgi_app.state.services.stats.runtime
+    runtime.update({"os": "linux", "sandbox": {"status": status}})
+    config = fake_core_lifecycle.astrbot_config
+    config["agent_runner"] = {"runner_type": "local"}
+    config["provider_settings"] = {
+        "computer_use_runtime": "none",
+        "computer_use_local_permissions": get_local_permission_defaults("Linux"),
+    }
+    payload = copy.deepcopy(config)
+    payload["provider_settings"]["computer_use_runtime"] = "local"
+
+    response = await asgi_client.put(
+        "/api/v1/config-profiles/default", headers=_jwt_headers(), json=payload
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "ok"
+    assert config["provider_settings"] == payload["provider_settings"]
     assert fake_core_lifecycle.reloaded_config_ids == ["default"]
 
 
@@ -3450,6 +3735,104 @@ async def test_v1_token_file_is_public(
     assert response.status_code == 200
     assert response.text == "token:demo-token"
     assert response.headers["content-type"].startswith("text/plain")
+
+    second_response = await asgi_client.get(f"/api/v1/files/tokens/{file_token}")
+
+    assert second_response.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cached_token_state", ["valid", "expired", "consumed"])
+async def test_v1_platform_logo_refreshes_stale_tokens_and_supports_repeated_reads(
+    asgi_client: httpx.AsyncClient,
+    asgi_app,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cached_token_state: str,
+):
+    """Exercise real config and image routes with reusable and stale logo tokens."""
+    logo_file = tmp_path / "logo.png"
+    PILImage.new("RGB", (1, 1), "red").save(logo_file)
+    platform = SimpleNamespace(
+        name="logo-test",
+        logo_path=logo_file.name,
+        default_config_tmpl={"type": "logo-test"},
+        config_metadata=None,
+    )
+    monkeypatch.setattr(file_token_service, "staged_files", {})
+    monkeypatch.setattr(config_service, "platform_registry", [platform])
+    monkeypatch.setitem(config_service.platform_cls_map, platform.name, FakePlatform)
+    monkeypatch.setattr(
+        config_service,
+        "inspect",
+        SimpleNamespace(getfile=lambda _cls: str(tmp_path / "adapter.py")),
+    )
+    display_service = asgi_app.state.services.config_display
+    cached_token = None
+    if cached_token_state != "valid":
+        cached_token = await file_token_service.register_file(
+            str(logo_file), timeout=-1 if cached_token_state == "expired" else 60
+        )
+        if cached_token_state == "consumed":
+            await file_token_service.handle_file(cached_token)
+        display_service._logo_token_cache[f"{platform.name}:{platform.logo_path}"] = (
+            cached_token
+        )
+
+    config_response = await asgi_client.get(
+        "/api/v1/system-config/runtime", headers=_jwt_headers()
+    )
+    assert config_response.status_code == 200
+    platform_metadata = config_response.json()["data"]["metadata"]["platform_group"][
+        "metadata"
+    ]["platform"]
+    token = platform_metadata["config_template"][platform.name]["logo_token"]
+    if cached_token is not None:
+        assert token != cached_token
+    logo_url = f"/api/v1/files/tokens/{token}"
+
+    first_response = await asgi_client.get(logo_url)
+    second_response = await asgi_client.get(logo_url)
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert second_response.content == logo_file.read_bytes()
+    assert second_response.headers["content-type"].startswith("image/png")
+
+    responses = await asyncio.gather(*(asgi_client.get(logo_url) for _ in range(3)))
+    assert all(response.status_code == 200 for response in responses)
+
+    templates = {}
+    await display_service.register_platform_logo(platform, templates)
+    assert templates[platform.name]["logo_token"] == token
+
+
+@pytest.mark.asyncio
+async def test_v1_plugin_logo_supports_repeated_reads(
+    asgi_client: httpx.AsyncClient,
+    asgi_app,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    logo_file = tmp_path / "logo.png"
+    PILImage.new("RGB", (1, 1), "red").save(logo_file)
+    monkeypatch.setattr(file_token_service, "staged_files", {})
+    plugin_service = asgi_app.state.services.plugins
+    plugin = SimpleNamespace(logo_path=str(logo_file))
+    logo_url = await plugin_service.resolve_plugin_logo_url(
+        plugin, plugin_service.get_plugin_logo_token
+    )
+
+    first_response = await asgi_client.get(logo_url)
+    second_response = await asgi_client.get(logo_url)
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert second_response.content == logo_file.read_bytes()
+    assert (
+        await plugin_service.resolve_plugin_logo_url(
+            plugin, plugin_service.get_plugin_logo_token
+        )
+        == logo_url
+    )
 
 
 def test_v1_openapi_alias_websocket_routes_are_mounted(asgi_app):

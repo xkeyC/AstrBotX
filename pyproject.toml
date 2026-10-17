@@ -1,6 +1,6 @@
 [project]
 name = "AstrBot"
-version = "4.28.2"
+version = "4.29.1"
 description = "Easy-to-use multi-platform LLM chatbot and development framework"
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
@@ -85,7 +85,7 @@ dependencies = [
   # requirement that names an immutable revision, so a branch here would
   # rebuild the whole Rust workspace on every install. Bump this SHA when the
   # binding changes.
-  "codex-astrbot @ git+https://github.com/xkeyC/codex_for_astrbot@7c410850cfba6e4615a1f56d340935fafc3099a5#subdirectory=codex-rs/astrbot-py",
+  "codex-astrbot @ git+https://github.com/xkeyC/codex_for_astrbot@16f94de6df6f3dea16012b086546057e8ebed27b#subdirectory=codex-rs/astrbot-py",
 ]
 
 [dependency-groups]
