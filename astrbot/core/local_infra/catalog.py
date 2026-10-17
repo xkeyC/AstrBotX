@@ -170,6 +170,30 @@ class InfraCatalog:
 catalog = InfraCatalog()
 
 
+def realtime_asr_model(settings: dict | None = None) -> str:
+    """The ASR model realtime voice sessions ask for ("": the server's).
+
+    The chosen one while the server lists it as a usable speech recognition
+    model, or while the catalog is unknown; otherwise the server's default.
+    """
+    settings = settings or local_infra_settings()
+    chosen = settings["services"]["realtime_voice"].get("asr_model", "")
+    if not chosen or not catalog.known:
+        return chosen
+    kind = SERVICE_TASK_KINDS["stt"]
+    if any(
+        m.id == chosen and m.usable and kind in m.task_kinds
+        for m in catalog.models or []
+    ):
+        return chosen
+    logger.warning(
+        "local-multimodal-infra has no usable ASR model %s for realtime voice; "
+        "using the server's default",
+        chosen,
+    )
+    return ""
+
+
 def resolved_services(settings: dict | None = None) -> dict[str, dict[str, Any]]:
     """``catalog.resolve`` of every service."""
     settings = settings or local_infra_settings()

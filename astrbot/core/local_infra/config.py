@@ -11,7 +11,8 @@ be switched off on its own:
 - ``moderation``: the content moderation of what goes to cloud models
   (``POST /v1/moderations``) and its options;
 - ``realtime_voice``: the server of the ``local_infra`` realtime voice
-  backend (``/v1/realtime``).
+  backend (``/v1/realtime``), and the ASR model its sessions hear with
+  (``asr_model``, empty: the server's realtime default).
 """
 
 from __future__ import annotations
@@ -89,7 +90,7 @@ DEFAULT_LOCAL_INFRA: dict[str, Any] = {
             "nsfw_labels": list(NSFW_LABELS),
             "categories": list(MODERATION_CATEGORIES),
         },
-        "realtime_voice": {"enable": True},
+        "realtime_voice": {"enable": True, "asr_model": ""},
     },
 }
 
@@ -119,8 +120,9 @@ def normalize_local_infra(raw: Any) -> dict[str, Any]:
     except (TypeError, ValueError):
         settings["timeout"] = DEFAULT_LOCAL_INFRA["timeout"]
     for service in settings["services"].values():
-        if "model" in service:
-            service["model"] = str(service["model"] or "").strip()
+        for key in ("model", "asr_model"):
+            if key in service:
+                service[key] = str(service[key] or "").strip()
     return settings
 
 

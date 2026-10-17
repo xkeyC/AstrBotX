@@ -405,6 +405,22 @@ async def test_the_voice_thread_talks_on_the_chosen_model(engine):
 
 
 @pytest.mark.asyncio
+async def test_the_chosen_asr_model_goes_to_the_server(engine, monkeypatch):
+    infra = {
+        **INFRA,
+        "services": {
+            **INFRA["services"],
+            "realtime_voice": {"asr_model": "fun-asr-nano-onnx"},
+        },
+    }
+    monkeypatch.setitem(voice.astrbot_config, "local_infra", infra)
+    t = await open_session(engine)
+    session = engine.params["config"]["realtime.local_infra.session"]
+    assert session["asr_model"] == "fun-asr-nano-onnx"
+    await t.session.close("done")
+
+
+@pytest.mark.asyncio
 async def test_audio_goes_both_ways(engine):
     t = await open_session(engine)
     # Platform audio reaches Codex as 16 kHz mono.

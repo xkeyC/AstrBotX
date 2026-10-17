@@ -170,6 +170,21 @@
             />
           </div>
 
+          <div
+            v-if="name === 'realtime_voice' && form.services.realtime_voice.enable"
+            class="infra-grid infra-service-extra"
+          >
+            <v-select
+              v-model="form.services.realtime_voice.asr_model"
+              :items="realtimeAsrItems()"
+              :label="tm('localInfra.realtimeAsr')"
+              :hint="tm('localInfra.realtimeAsrHint')"
+              persistent-hint
+              variant="outlined"
+              density="comfortable"
+            />
+          </div>
+
           <div v-if="name === 'moderation' && form.services.moderation.enable" class="infra-service-extra">
             <div class="infra-grid">
               <v-text-field
@@ -500,6 +515,19 @@ function modelItems(name: ServiceName) {
     ...ids.map((id) => ({ title: id, value: id }))
   ]
   const chosen = form.value?.services[name]?.model
+  if (chosen && !ids.includes(chosen)) {
+    items.push({ title: tm('localInfra.unavailableModel', { model: chosen }), value: chosen })
+  }
+  return items
+}
+
+function realtimeAsrItems() {
+  const ids = candidates('stt')
+  const items = [
+    { title: tm('localInfra.realtimeAsrDefault'), value: '' },
+    ...ids.map((id) => ({ title: id, value: id }))
+  ]
+  const chosen = form.value?.services.realtime_voice?.asr_model
   if (chosen && !ids.includes(chosen)) {
     items.push({ title: tm('localInfra.unavailableModel', { model: chosen }), value: chosen })
   }

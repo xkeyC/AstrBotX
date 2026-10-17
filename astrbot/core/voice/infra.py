@@ -413,6 +413,8 @@ class InfraVoiceSession(VoiceSession):
             session["tts_emotion"] = emotion
             session["tts_emotion_strength"] = float(settings["emotion_strength"])
         session["tts_stream_text"] = bool(settings["stream_text"])
+        if asr_model := str(settings.get("asr_model") or ""):
+            session["asr_model"] = asr_model
         session["moderation"] = self._moderation()
         config = {
             **{

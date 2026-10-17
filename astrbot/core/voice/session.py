@@ -281,10 +281,11 @@ def _runner_config() -> dict:
 def realtime_voice_config() -> dict:
     """The runner's realtime voice settings (``realtime_voice``), with the
     local-multimodal-infra server's realtime WebSocket and token
-    (``infra_url``, ``infra_token``) from the ``local_infra`` setting;
+    (``infra_url``, ``infra_token``) and the ASR model to hear with
+    (``asr_model``, "" for the server's) from the ``local_infra`` setting;
     ``infra_url`` is empty while the server or its realtime voice service is
     off."""
-    from astrbot.core.local_infra.catalog import catalog
+    from astrbot.core.local_infra.catalog import catalog, realtime_asr_model
     from astrbot.core.local_infra.config import local_infra_settings, realtime_url
 
     voice = dict(_runner_config()["realtime_voice"])
@@ -292,6 +293,7 @@ def realtime_voice_config() -> dict:
     available = catalog.resolve("realtime_voice", infra)["available"]
     voice["infra_url"] = realtime_url(infra) if available else ""
     voice["infra_token"] = infra["token"]
+    voice["asr_model"] = realtime_asr_model(infra) if available else ""
     return voice
 
 

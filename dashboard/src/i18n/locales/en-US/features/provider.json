@@ -232,6 +232,9 @@
     "autoModel": "Auto ({model})",
     "autoModelNone": "Auto (none on the server)",
     "unavailableModel": "{model} (unavailable)",
+    "realtimeAsr": "Realtime voice speech recognition",
+    "realtimeAsrHint": "The ASR model realtime voice sessions hear with; the server's default when it lacks this model.",
+    "realtimeAsrDefault": "Server default",
     "state": {
       "off": "Off",
       "on": "Available",

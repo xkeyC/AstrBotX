@@ -232,6 +232,9 @@
     "autoModel": "Auto ({model})",
     "autoModelNone": "Auto (none on the server)",
     "unavailableModel": "{model} (unavailable)",
+    "realtimeAsr": "リアルタイム音声の音声認識モデル",
+    "realtimeAsrHint": "リアルタイム音声セッションで使う ASR モデル。サーバーにない場合はサーバーの既定を使います。",
+    "realtimeAsrDefault": "サーバーの既定",
     "state": {
       "off": "Off",
       "on": "Available",

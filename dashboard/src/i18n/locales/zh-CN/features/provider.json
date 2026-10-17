@@ -232,6 +232,9 @@
     "autoModel": "自动（{model}）",
     "autoModelNone": "自动（服务器未提供）",
     "unavailableModel": "{model}（不可用）",
+    "realtimeAsr": "实时语音的语音识别模型",
+    "realtimeAsrHint": "实时语音会话用它听写；服务器没有这个模型时用其默认模型。",
+    "realtimeAsrDefault": "服务器默认",
     "state": {
       "off": "已关闭",
       "on": "可用",
