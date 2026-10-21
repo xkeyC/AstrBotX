@@ -356,10 +356,11 @@ def system_prompt(cfg: dict) -> str:
 
 # Codex saves a generated image under CODEX_HOME, on the host and outside every
 # tool the model has -- the message tools refuse CODEX_HOME outright. So the
-# image is copied into the chat's workspace and the model is told where, and it
-# decides whether to send it or keep working on it. Both the hosted Responses
-# item ("ImageGeneration") and the standalone extension item
-# ("image_gen.generation") carry the same `saved_path`.
+# host sends the image to the chat as soon as it is saved, copies it into the
+# chat's workspace (the sandbox when tools run there) for the model to keep
+# working on, and tells the model both. The hosted Responses item
+# ("ImageGeneration") carries `saved_path`; the standalone extension item
+# ("image_gen.generation") is camelCase and carries `savedPath`.
 _IMAGE_ITEM_TYPES = ("ImageGeneration",)
 _IMAGE_ITEM_KIND = "image_gen.generation"
 #: Workspace-relative directory generated images are copied into. The same
@@ -368,23 +369,56 @@ _IMAGE_ITEM_KIND = "image_gen.generation"
 GENERATED_IMAGE_DIR = "generated_images"
 #: Where Shipyard Neo mounts the sandbox workspace.
 SANDBOX_WORKSPACE = "/workspace"
+#: How long the saved-image hook waits for the copy before answering the model.
+#: Codex gives the hook 60 s; a sandbox that still has to boot can take longer,
+#: and then the copy finishes in the background and the model is told later.
+PLACE_WAIT_SECONDS = 40.0
 
 
-def generated_image_note(relative_path: str, where: str) -> str:
-    """Tells the model where its generated image went and what to do with it."""
+def _sent_line(send_error: str | None) -> str:
+    if send_error is None:
+        return (
+            "The image has already been sent to the user; do not send it again "
+            "unless they ask."
+        )
     return (
-        f"The image was copied to {where}. It has NOT been sent to the user, and "
-        "nothing will send it for you. To show it, call send_message_to_user with "
-        f'{{"type": "image", "path": "{relative_path}"}}. You can also keep working '
-        "with the file where it is."
+        f"The image could NOT be sent to the user ({send_error}); nothing else "
+        "will send it."
     )
 
 
-def generated_image_failure_note(error: str) -> str:
-    """Tells the model its generated image could not be made reachable."""
+def generated_image_note(
+    relative_path: str, where: str, send_error: str | None = None
+) -> str:
+    """Tells the model whether its image was sent and where its copy is."""
+    note = (
+        f"{_sent_line(send_error)} A copy is at {where} for you to keep working "
+        "on (read, edit, convert, ...)."
+    )
+    if send_error is not None:
+        note += (
+            " To show it, call send_message_to_user with "
+            f'{{"type": "image", "path": "{relative_path}"}}.'
+        )
+    return note
+
+
+def generated_image_failure_note(error: str, send_error: str | None = None) -> str:
+    """Tells the model its generated image could not be copied to its workspace."""
+    note = (
+        f"{_sent_line(send_error)} The image could not be copied into your "
+        f"workspace ({error}), so you cannot work with the file."
+    )
+    if send_error is not None:
+        note += " Tell the user it could not be delivered."
+    return note
+
+
+def generated_image_pending_note(send_error: str | None = None) -> str:
+    """Tells the model its image copy is still on its way to its workspace."""
     return (
-        f"The image could not be copied into your workspace ({error}), so you "
-        "cannot send or use it. Tell the user it could not be delivered."
+        f"{_sent_line(send_error)} A copy is still being placed in your "
+        "workspace; you will be told its path when it is there."
     )
 
 
@@ -400,7 +434,7 @@ def generated_image_path(item: JsonObject) -> str | None:
     )
     if not is_image or item.get("status") != "completed":
         return None
-    path = item.get("saved_path")
+    path = item.get("saved_path") or item.get("savedPath")
     if not isinstance(path, str) or not path:
         return None
     return path if os.path.isfile(path) else None
@@ -884,7 +918,31 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
             return "none"
         return str(settings.get("computer_use_runtime") or "none")
 
-    async def _place_generated_image(self, path: str) -> str:
+    async def _send_generated_image(self, path: str) -> str | None:
+        """Sends a generated image to the chat.
+
+        Returns:
+            None when it was sent, otherwise why not.
+        """
+        from astrbot.core.message.components import Image
+
+        try:
+            ctx = self.run_context.context.context  # type: ignore[attr-defined]
+            sent = await ctx.send_message(
+                self.umo, MessageChain(chain=[Image.fromFileSystem(path)])
+            )
+        except Exception as e:  # noqa: BLE001 - platform failure
+            logger.warning("Could not send generated image %s: %s", path, e)
+            return str(e) or type(e).__name__
+        if not sent:
+            logger.warning("Could not send generated image %s: no platform", path)
+            return "no platform for this chat"
+        if (event := self._event()) is not None:
+            event._has_send_oper = True
+        logger.info("Generated image sent to %s", self.umo)
+        return None
+
+    async def _place_generated_image(self, path: str) -> tuple[str, str]:
         """Copies a generated image into the chat's workspace.
 
         The sandbox workspace when tools run there, the host workspace
@@ -892,8 +950,7 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
         send_message_to_user resolves to.
 
         Returns:
-            The note to give the model: where the image is, or why it is not
-            anywhere it can reach.
+            The workspace-relative path, and where that is for the model.
         """
         from astrbot.core.computer.computer_client import get_booter
         from astrbot.core.tools.computer_tools.util import (
@@ -903,37 +960,89 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
 
         relative = f"{GENERATED_IMAGE_DIR}/{os.path.basename(path)}"
         runtime = self._computer_runtime()
+        if runtime == "sandbox":
+            ctx = self.run_context.context.context  # type: ignore[attr-defined]
+            booter = await get_booter(ctx, self.umo)
+            result = await booter.upload_file(path, relative)
+            if isinstance(result, dict) and result.get("success") is False:
+                raise RuntimeError(
+                    str(result.get("error") or result.get("message") or "upload failed")
+                )
+            where = (
+                f"`{relative}` in your sandbox workspace "
+                f"(`{SANDBOX_WORKSPACE}/{relative}`)"
+            )
+        else:
+            root = (
+                await workspace_root_for_context(self.run_context)  # type: ignore[arg-type]
+                if runtime == "local"
+                else workspace_root(self.umo)
+            )
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(shutil.copyfile, path, target)
+            where = f"`{relative}` in your workspace"
+        logger.info("Generated image placed at %s (%s runtime)", relative, runtime)
+        return relative, where
+
+    async def _deliver_generated_image(self, path: str) -> str:
+        """Sends a generated image to the chat and copies it to the workspace.
+
+        Returns:
+            The note to give the model: whether the image was sent, and where
+            its copy is or why there is none. A copy that takes longer than
+            PLACE_WAIT_SECONDS goes on in the background and its note is
+            steered into the turn when it is done.
+        """
+        placing = asyncio.ensure_future(self._place_generated_image(path))
+        send_error = await self._send_generated_image(path)
         try:
-            if runtime == "sandbox":
-                ctx = self.run_context.context.context  # type: ignore[attr-defined]
-                booter = await get_booter(ctx, self.umo)
-                await booter.upload_file(path, relative)
-                where = (
-                    f"`{relative}` in your sandbox workspace "
-                    f"(`{SANDBOX_WORKSPACE}/{relative}`)"
+            relative, where = await asyncio.wait_for(
+                asyncio.shield(placing), PLACE_WAIT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            logger.info("Generated image %s still being placed", path)
+            placing.add_done_callback(
+                lambda task: asyncio.ensure_future(
+                    self._steer_late_placement(task, path, send_error)
                 )
-            else:
-                root = (
-                    await workspace_root_for_context(self.run_context)  # type: ignore[arg-type]
-                    if runtime == "local"
-                    else workspace_root(self.umo)
-                )
-                target = root / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                await asyncio.to_thread(shutil.copyfile, path, target)
-                where = f"`{relative}` in your workspace"
+            )
+            return generated_image_pending_note(send_error)
         except Exception as e:  # noqa: BLE001 - sandbox or filesystem failure
             logger.warning("Could not place generated image %s: %s", path, e)
-            return generated_image_failure_note(str(e))
-        logger.info("Generated image placed at %s (%s runtime)", relative, runtime)
-        return generated_image_note(relative, where)
+            return generated_image_failure_note(str(e), send_error)
+        return generated_image_note(relative, where, send_error)
+
+    async def _steer_late_placement(
+        self, placing: asyncio.Future, path: str, send_error: str | None
+    ) -> None:
+        """Tells the running turn where a late image copy went."""
+        if placing.cancelled():
+            return
+        if (e := placing.exception()) is not None:
+            logger.warning("Could not place generated image %s: %s", path, e)
+            note = generated_image_failure_note(str(e), send_error)
+        else:
+            note = generated_image_note(*placing.result(), send_error)
+        engine, thread_id = self._engine, self._thread_id
+        if (
+            engine is None
+            or thread_id is None
+            or not await self._steer_note(
+                engine,
+                thread_id,
+                self._active,
+                request_context("generated_image", note),
+            )
+        ):
+            logger.info("Late image note for %s arrived after the turn ended", path)
 
     async def _on_saved_image(self, call_id: str, saved_path: str) -> str | None:
-        """Places an image Codex just saved; the result is the tool's output."""
+        """Delivers an image Codex just saved; the result is the tool's output."""
         if not os.path.isfile(saved_path):
             return None
         self._hooked_images.add(saved_path)
-        return await self._place_generated_image(saved_path)
+        return await self._deliver_generated_image(saved_path)
 
     async def _steer_note(
         self, engine: CodexEngine, thread_id: str, active: ActiveTurn | None, note: str
@@ -1120,7 +1229,7 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                                 placed_images.add(path)
                                 note = request_context(
                                     "generated_image",
-                                    await self._place_generated_image(path),
+                                    await self._deliver_generated_image(path),
                                 )
                                 if not await self._steer_note(
                                     engine, thread_id, active, note

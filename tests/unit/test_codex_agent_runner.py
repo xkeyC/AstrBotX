@@ -584,14 +584,16 @@ def test_generated_image_path_accepts_hosted_item(tmp_path):
 
 
 def test_generated_image_path_accepts_extension_item(tmp_path):
-    """独立图片生成走扩展 item，tag 是 kind 而不是 type。"""
+    """独立图片生成走扩展 item：tag 是 kind 而不是 type，字段是 camelCase。"""
     png = tmp_path / "shot.png"
     png.write_bytes(b"png")
     item = {
         "type": "Extension",
         "kind": "image_gen.generation",
+        "id": "call-1",
         "status": "completed",
-        "saved_path": str(png),
+        "revisedPrompt": "a cat",
+        "savedPath": str(png),
     }
 
     assert generated_image_path(item) == str(png)
