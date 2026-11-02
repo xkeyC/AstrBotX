@@ -130,7 +130,12 @@ def create_dashboard_asgi_app(
         knowledge_bases=KnowledgeBaseService(core_lifecycle),
         live_chat=LiveChatService(db, core_lifecycle),
         local_infra=LocalInfraService(core_lifecycle),
-        logs=LogService(log_broker, core_lifecycle.astrbot_config),
+        logs=LogService(
+            log_broker,
+            core_lifecycle.astrbot_config,
+            core=core_lifecycle,
+            dashboard_static_folder=static_folder,
+        ),
         bots=BotConfigService(core_lifecycle),
         platforms=PlatformService(core_lifecycle),
         providers=ProviderConfigService(core_lifecycle),

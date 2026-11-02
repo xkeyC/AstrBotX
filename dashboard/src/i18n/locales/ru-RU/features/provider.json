@@ -14,6 +14,7 @@
             "all": "Все",
             "localInfra": "Локальный сервис",
             "chatCompletion": "Диалоги",
+            "decision": "Решения",
             "speechToText": "STT (Речь -> Текст)",
             "textToSpeech": "TTS (Текст -> Речь)",
             "embedding": "Эмбеддинги",
@@ -28,6 +29,11 @@
             "kimi_code": "Специальная интеграция Kimi CodingPlan / Kimi Code с отдельной совместимой адаптацией Anthropic API.",
             "vllm_rerank": "Также поддерживает Jina AI, Cohere, PPIO и другие.",
             "default": "Преобразование речи в текст"
+        },
+        "decisionHints": {
+            "apiBase": "Адрес System One. К базовому URL автоматически добавляется /systemone; завершите URL символом /, чтобы использовать его без изменений.",
+            "model": "ID модели System One, например jev-latest, jev-preview или имя модели, указанное провайдером.",
+            "customHeaders": "HTTP-заголовки, добавляемые AstrBot к запросам принятия решений."
         }
     },
     "availability": {
@@ -51,6 +57,7 @@
             "title": "Новый провайдер",
             "tabs": {
                 "basic": "Диалоги",
+                "decision": "Решения",
                 "speechToText": "Преобразование текста в речь",
                 "textToSpeech": "Переранжирование",
                 "embedding": "Эмбеддинги",

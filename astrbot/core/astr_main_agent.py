@@ -656,6 +656,7 @@ async def _ensure_persona_and_skills(
     event: AstrMessageEvent,
 ) -> None:
     """Apply persona and skills before the current user input."""
+    event.set_extra("_trace_persona_id", None)
     if req.system_prompt is None:
         req.system_prompt = ""
 
@@ -680,6 +681,8 @@ async def _ensure_persona_and_skills(
         provider_settings=cfg,
         selected_persona_id=get_event_selected_persona_id(event),
     )
+
+    event.set_extra("_trace_persona_id", persona_id)
 
     set_persona_custom_error_message_on_event(
         event, extract_persona_custom_error_message_from_persona(persona)
@@ -797,15 +800,6 @@ async def _ensure_persona_and_skills(
         req.func_tool = persona_toolset
     else:
         req.func_tool.merge(persona_toolset)
-
-    try:
-        event.trace.record(
-            "sel_persona",
-            persona_id=persona_id,
-            persona_toolset=persona_toolset.names(),
-        )
-    except Exception:
-        pass
 
 
 async def _request_img_caption(
