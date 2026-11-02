@@ -192,6 +192,53 @@ async def test_cleanup_is_selective_and_matches_exact_platform(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("target", "released"),
+    [("conversations", True), ("preferences", True), ("custom_rules", False)],
+)
+async def test_cleanup_releases_codex_threads(temp_db, monkeypatch, target, released):
+    """A returning bot must not resume the threads of deleted conversations."""
+    from astrbot.core.agent.runners.codex.native import CodexEngine
+
+    preferences = SharedPreferences(temp_db)
+    monkeypatch.setattr(bot_cleanup_service, "sp", preferences)
+    release = AsyncMock()
+    monkeypatch.setattr(CodexEngine, "release_thread", release)
+    core = SimpleNamespace(
+        db=temp_db,
+        cron_manager=None,
+        conversation_manager=ConversationManager(temp_db),
+        umop_config_router=UmopConfigRouter(preferences),
+        astrbot_config={},
+    )
+    umo = "bot:GroupMessage:room"
+    other = "other:GroupMessage:room"
+    keys = (
+        "codex_thread",
+        "voice_thread",
+        "voice_thread_infra",
+        "mumble_voice_thread",
+        "mumble_voice_thread_infra",
+    )
+    for key in keys:
+        await preferences.put_async("umo", umo, key, {"thread_id": key})
+    await preferences.put_async("umo", other, "codex_thread", {"thread_id": "keep"})
+    await preferences.put_async("umo", umo, "voice_thread_state", {"thread_id": "no"})
+
+    await delete_bot_data(core, "bot", {target})
+
+    if target != "preferences":
+        # A plugin's key that merely contains the voice key is not a thread.
+        assert await preferences.get_async("umo", umo, "voice_thread_state", None)
+    for key in keys:
+        stored = await preferences.get_async("umo", umo, key, None)
+        assert (stored is None) is released
+    assert await preferences.get_async("umo", other, "codex_thread", None)
+    released_ids = sorted(call.args[1] for call in release.await_args_list)
+    assert released_ids == (sorted(keys) if released else [])
+
+
+@pytest.mark.asyncio
 async def test_delete_bot_keeps_config_on_cleanup_failure(monkeypatch):
     """Report cleanup failure without losing the adapter needed for a retry."""
     bot = {"id": "bot", "enable": True}

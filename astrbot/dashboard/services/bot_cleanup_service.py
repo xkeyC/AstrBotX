@@ -5,6 +5,7 @@ import asyncio
 from sqlmodel import col, delete, func, select
 
 from astrbot.core import sp
+from astrbot.core.agent.runners.codex.constants import CODEX_THREAD_STATE_KEY
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
 from astrbot.core.db.po import (
     ConversationV2,
@@ -65,13 +66,35 @@ async def delete_bot_data(
                 .scalars()
                 .all()
             )
+        from astrbot.core.voice.session import VOICE_THREAD_KEY
+
         for preference in preferences:
             is_rule = preference.key in AVAILABLE_SESSION_RULE_KEYS
+            # Codex keeps the conversation itself in these threads, and resumes
+            # them if a bot with this ID comes back. Voice platforms prefix the
+            # voice key, and local-infra sessions suffix it.
+            is_thread = (
+                preference.key == CODEX_THREAD_STATE_KEY
+                or preference.key.removesuffix("_infra").endswith(VOICE_THREAD_KEY)
+            )
             if (
                 (is_rule and "custom_rules" in targets)
                 or (not is_rule and "preferences" in targets)
                 or (preference.key == "sel_conv_id" and "conversations" in targets)
+                or (is_thread and "conversations" in targets)
             ):
+                if is_thread:
+                    from astrbot.core.agent.runners.codex.native import CodexEngine
+
+                    state = await sp.get_async(
+                        "umo", preference.scope_id, preference.key, {}
+                    )
+                    if isinstance(state, dict) and (
+                        thread_id := state.get("thread_id")
+                    ):
+                        await CodexEngine.release_thread(
+                            preference.scope_id, str(thread_id)
+                        )
                 await sp.remove_async("umo", preference.scope_id, preference.key)
 
     if "preferences" in targets:
