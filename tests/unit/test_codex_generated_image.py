@@ -82,6 +82,7 @@ def test_note_says_the_image_was_sent_and_where_the_copy_is():
 
     assert "generated_images/call-1.png" in note
     assert "already been sent" in note
+    assert "generate it again" in note
     # 已经发过了，不要再引导模型重复发送
     assert "send_message_to_user" not in note
 
@@ -401,6 +402,34 @@ async def test_the_runner_handler_places_the_image_and_marks_it_handled(
     assert len(runner.sent) == 1
     assert "already been sent" in text
     assert f"{GENERATED_IMAGE_DIR}/call-1.png" in text
+
+
+@pytest.mark.asyncio
+async def test_the_hook_does_not_steer_a_running_exec(monkeypatch, image, tmp_path):
+    """插入回合算用户输入，Codex 会让还在跑的 exec 提前返回，模型就看不到图了。"""
+    import astrbot.core.tools.computer_tools.util as util
+
+    monkeypatch.setattr(util, "workspace_root", lambda umo: tmp_path / "ws")
+    engine = _Engine("steered")
+    runner = _runner("none")
+    runner._hooked_images = set()
+    runner._engine = engine
+    runner._thread_id = "thread-1"
+    runner._active = runner_mod.ActiveTurn(engine, "thread-1", "turn-1", "20017")
+
+    text = await runner._on_saved_image("call-1", str(image))
+    await asyncio.sleep(0)
+
+    assert "already been sent" in text
+    assert engine.requests == []
+
+
+def test_the_prompt_tells_the_model_how_to_read_an_image_result():
+    """系统提示要说明生图结果没有 content，否则模型遍历不到内容，以为没生成。"""
+    prompt = runner_mod.DEFAULT_SYSTEM_PROMPT
+    assert "`generatedImage(result)`" in prompt
+    assert '"yield_time_ms": 120000' in prompt
+    assert "`wait`" in prompt
 
 
 @pytest.mark.asyncio

@@ -35,8 +35,14 @@ paragraphs and simple lists read best in chat apps.
 - AstrBot's tools (plugins, sandbox, platform actions) are called from the \
 `exec` tool: they live on the global `tools` object under the `astrbot__` \
 prefix. List them with `ALL_TOOLS` when you are unsure which exist.
-- Tool results are objects `{content, isError, text}`; forward images with \
+- Their results are objects `{content, isError, text}`; forward images with \
 `image(item)` when the user should see them or you need to look at them.
+- `image_gen__imagegen` differs: its result has no `content`. In the same \
+script, pass the whole result to `generatedImage(result)` to see the image and \
+what became of it. The chat gets each image as it is saved, so generate it \
+once. Start the script with `// @exec: {"yield_time_ms": 120000}`; if it is \
+still running, `wait` for it rather than generating again or ending your \
+reply, because an image that finishes after your reply is lost.
 - If a tool says it already sent something to the user, do not repeat it.
 - Batch independent tool calls in one script with `Promise.all`.
 - Only call tools when they help; greetings and small talk need none.

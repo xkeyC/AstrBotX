@@ -378,8 +378,8 @@ PLACE_WAIT_SECONDS = 40.0
 def _sent_line(send_error: str | None) -> str:
     if send_error is None:
         return (
-            "The image has already been sent to the user; do not send it again "
-            "unless they ask."
+            "The image has already been sent to the user; do not send or generate "
+            "it again unless they ask."
         )
     return (
         f"The image could NOT be sent to the user ({send_error}); nothing else "
@@ -1042,6 +1042,8 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
         if not os.path.isfile(saved_path):
             return None
         self._hooked_images.add(saved_path)
+        # The note stays in the tool result: a steer here would be user input,
+        # which makes Codex yield the exec cell before it can show the image.
         return await self._deliver_generated_image(saved_path)
 
     async def _steer_note(
