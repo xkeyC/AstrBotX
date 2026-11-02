@@ -54,6 +54,8 @@ async def test_a_private_voice_turn_runs_as_the_speaker(turns):
     # The agent is told the speaker waits: be quick, report async work at once.
     assert "waiting on the line" in prompt
     assert "reply at once with its status" in prompt
+    # An image goes on after the reply, so the speaker does not wait for it.
+    assert '`// @exec: {"yield_time_ms": 5000}`' in prompt
     # Voice turns do not take the same person's text into them.
     assert "via:voice" in turn_scopes(event)
 

@@ -300,6 +300,19 @@ class ThreadPump:
                     )
                     self.tool_tasks.add(task)
                     task.add_done_callback(self.tool_tasks.discard)
+                if (
+                    msg.get("type") == "turn_aborted"
+                    and msg.get("reason") == "interrupted"
+                ):
+                    # An interrupt ends every code cell, with their images.
+                    self.engine.late_images.pop(self.thread_id, None)
+                if msg.get("type") == "item_completed":
+                    # The saved-image hook runs first and takes its entry, so
+                    # one still here is an image that was never saved.
+                    item = msg.get("item") or {}
+                    late = self.engine.late_images.get(self.thread_id, {})
+                    if (owner := late.pop(str(item.get("id") or ""), None)) is not None:
+                        owner.on_late_image_failed()
                 if self.route is not None:
                     # Which turn it belongs to: a turn interrupted just before
                     # this one still reports into the open route.
@@ -425,17 +438,26 @@ class CodexEngine:
         self.session_locks: dict[str, asyncio.Lock] = {}
         #: thread id -> handler of images Codex saves during that thread's turn.
         self.saved_image_handlers: dict[str, SavedImageHandler] = {}
+        #: thread id -> call id -> the runner of the turn that started an image
+        #: still generating after that turn ended.
+        self.late_images: dict[str, dict[str, Any]] = {}
 
     async def _on_saved_image(
         self, thread_id: str, call_id: str, saved_path: str
     ) -> str | None:
         """Codex's saved-image hook: the returned text is the tool result.
 
-        Routed to the turn running on that thread, which knows the chat and so
-        where the image has to go. Never raises: a failure here only means
-        Codex falls back to its own hint.
+        Routed to the turn that started the image if that turn is over, else
+        the turn running on that thread, which knows the chat and so where the
+        image has to go. Never raises: a failure here only means Codex falls
+        back to its own hint.
         """
-        handler = self.saved_image_handlers.get(thread_id)
+        owner = self.late_images.get(thread_id, {}).pop(call_id, None)
+        handler = (
+            owner.on_late_saved_image
+            if owner is not None
+            else self.saved_image_handlers.get(thread_id)
+        )
         if handler is None:
             return None
         try:
@@ -584,5 +606,7 @@ class CodexEngine:
 
     async def forget_thread(self, thread_id: str) -> None:
         self.drop_additional_context(thread_id)
+        self.saved_image_handlers.pop(thread_id, None)
+        self.late_images.pop(thread_id, None)
         with contextlib.suppress(Exception):
             await self.rt.shutdown_thread(thread_id)

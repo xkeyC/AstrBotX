@@ -362,6 +362,8 @@ def system_prompt(cfg: dict) -> str:
 # ("ImageGeneration") carries `saved_path`; the standalone extension item
 # ("image_gen.generation") is camelCase and carries `savedPath`.
 _IMAGE_ITEM_TYPES = ("ImageGeneration",)
+#: Wake-ups for images that finished after their turn, kept alive while they run.
+_LATE_IMAGE_WAKES: set[asyncio.Task] = set()
 _IMAGE_ITEM_KIND = "image_gen.generation"
 #: Workspace-relative directory generated images are copied into. The same
 #: relative path resolves for send_message_to_user in every runtime: the host
@@ -427,12 +429,13 @@ def request_context(name: str, text: str) -> str:
     return f'<request_context name="{name}">\n{text}\n</request_context>'
 
 
+def _is_image_item(item: JsonObject) -> bool:
+    return item.get("type") in _IMAGE_ITEM_TYPES or item.get("kind") == _IMAGE_ITEM_KIND
+
+
 def generated_image_path(item: JsonObject) -> str | None:
     """Path of a completed generated image, if this item is one."""
-    is_image = (
-        item.get("type") in _IMAGE_ITEM_TYPES or item.get("kind") == _IMAGE_ITEM_KIND
-    )
-    if not is_image or item.get("status") != "completed":
+    if not _is_image_item(item) or item.get("status") != "completed":
         return None
     path = item.get("saved_path") or item.get("savedPath")
     if not isinstance(path, str) or not path:
@@ -1039,12 +1042,67 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
 
     async def _on_saved_image(self, call_id: str, saved_path: str) -> str | None:
         """Delivers an image Codex just saved; the result is the tool's output."""
+        # Saved, and this hook delivers it even if the turn ends meanwhile.
+        self._images_running.discard(call_id)
         if not os.path.isfile(saved_path):
             return None
         self._hooked_images.add(saved_path)
         # The note stays in the tool result: a steer here would be user input,
         # which makes Codex yield the exec cell before it can show the image.
         return await self._deliver_generated_image(saved_path)
+
+    async def on_late_saved_image(self, call_id: str, saved_path: str) -> str | None:
+        """Sends an image that finished after this turn, and reports it.
+
+        Nothing reads the tool result of a cell whose turn is over, so the copy
+        and the report go on in the background, past the hook's time budget.
+        """
+        if self._aborted or not os.path.isfile(saved_path):
+            return None
+        send_error = await self._send_generated_image(saved_path)
+        self._report_late_image(self._late_image_note(saved_path, send_error))
+        return generated_image_pending_note(send_error)
+
+    async def _late_image_note(self, path: str, send_error: str | None) -> str:
+        try:
+            relative, where = await self._place_generated_image(path)
+            note = generated_image_note(relative, where, send_error)
+        except Exception as e:  # noqa: BLE001 - sandbox or filesystem failure
+            logger.warning("Could not place generated image %s: %s", path, e)
+            note = generated_image_failure_note(str(e), send_error)
+        return f"An image you started generating earlier has finished. {note}"
+
+    def on_late_image_failed(self) -> None:
+        """Reports an image that failed after this turn: the reply promised it."""
+        if self._aborted:
+            return
+
+        async def note() -> str:
+            return (
+                "An image you started generating earlier failed, so it did not "
+                "reach the chat. Tell the user."
+            )
+
+        self._report_late_image(note())
+
+    def _report_late_image(self, note: T.Awaitable[str]) -> None:
+        """Tells the chat's thread how an image of this turn ended, as whoever
+        started it, once ``note`` is ready. Not awaited: it queues in the chat."""
+        from .wake import run_late_image_completion
+
+        event = self._event()
+        task = asyncio.ensure_future(
+            run_late_image_completion(
+                self.run_context.context.context,  # type: ignore[attr-defined]
+                session_str=self.umo,
+                sender_id=self._sender_id(),
+                role=str(getattr(event, "role", "") or ""),
+                group_id=str(event.get_group_id() or "") if event else "",
+                note=note,
+            )
+        )
+        _LATE_IMAGE_WAKES.add(task)
+        task.add_done_callback(_LATE_IMAGE_WAKES.discard)
 
     async def _steer_note(
         self, engine: CodexEngine, thread_id: str, active: ActiveTurn | None, note: str
@@ -1087,6 +1145,7 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                 # tool result itself. The event-stream path below only covers
                 # an image the hook did not handle.
                 self._hooked_images = set()
+                self._images_running = set()
                 engine.saved_image_handlers[thread_id] = self._on_saved_image
                 pump = engine.pump(thread_id)
                 queue = pump.open_turn(self._handle_tool_call)
@@ -1210,8 +1269,12 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                             item = msg.get("item") or {}
                             if item.get("type") == "AgentMessage":
                                 phases[item.get("id", "")] = item.get("phase")
+                            elif _is_image_item(item):
+                                self._images_running.add(str(item.get("id") or ""))
                         elif kind == "item_completed":
                             item = msg.get("item") or {}
+                            if _is_image_item(item):
+                                self._images_running.discard(str(item.get("id") or ""))
                             # Only streamed items have one; flush what it held.
                             markup = markup_streams.pop(item.get("id", ""), None)
                             tail = markup.finish() if markup else ""
@@ -1408,6 +1471,13 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                         == self._on_saved_image
                     ):
                         engine.saved_image_handlers.pop(thread_id, None)
+                    # A code cell outlives its turn, and the images it is still
+                    # generating with it. They stay this turn's, whichever turn
+                    # is open when they finish. A stopped turn's are not wanted.
+                    if not self._aborted and self._images_running:
+                        engine.late_images.setdefault(thread_id, {}).update(
+                            dict.fromkeys(self._images_running, self)
+                        )
                     if active is not None and ACTIVE_TURNS.get(self.umo) is active:
                         ACTIVE_TURNS.pop(self.umo, None)
                     pump.close_turn()

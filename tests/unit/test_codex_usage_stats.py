@@ -108,6 +108,10 @@ class _Rt:
         )
 
 
+async def _noop_interrupt(self, thread_id):
+    pass
+
+
 class _Pump:
     def __init__(self, events):
         self.events = events
@@ -130,6 +134,7 @@ class _Engine:
         self.rt = _Rt(totals)
         self._pump = _Pump(events)
         self.saved_image_handlers = {}
+        self.late_images = {}
         self.lock = asyncio.Lock()
 
     def session_lock(self, umo):
@@ -242,6 +247,60 @@ async def test_without_codex_ttft_the_first_output_is_timed(monkeypatch, temp_db
     [row] = rows
     assert 0 < row.time_to_first_token < 5
     assert (row.token_input_other, row.token_output) == (100, 10)
+
+
+def _image(status):
+    return {
+        "type": "item_" + ("started" if status == "in_progress" else "completed"),
+        "item": {"kind": "image_gen.generation", "id": "call-1", "status": status},
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_image_still_running_stays_its_turn_s(monkeypatch, temp_db):
+    runner, _, _ = await _run(
+        monkeypatch,
+        temp_db,
+        [_image("in_progress"), {"type": "task_complete"}],
+        [_total(10, 0, 1), _total(10, 0, 1)],
+    )
+
+    assert runner._engine.late_images == {"thread-1": {"call-1": runner}}
+    assert runner._engine.saved_image_handlers == {}
+
+
+@pytest.mark.asyncio
+async def test_a_finished_image_leaves_nothing_behind(monkeypatch, temp_db):
+    runner, _, _ = await _run(
+        monkeypatch,
+        temp_db,
+        [_image("in_progress"), _image("failed"), {"type": "task_complete"}],
+        [_total(10, 0, 1), _total(10, 0, 1)],
+    )
+
+    assert runner._engine.late_images == {}
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_turn_leaves_its_images_behind(monkeypatch, temp_db):
+    open_turn = _Pump.open_turn
+
+    def stop_then_open(self, handler):
+        handler.__self__._aborted = True
+        return open_turn(self, handler)
+
+    monkeypatch.setattr(_Pump, "open_turn", stop_then_open)
+    monkeypatch.setattr(_Engine, "interrupt", _noop_interrupt, raising=False)
+
+    runner, _, _ = await _run(
+        monkeypatch,
+        temp_db,
+        [_image("in_progress"), {"type": "turn_aborted"}],
+        [_total(10, 0, 1), _total(10, 0, 1)],
+    )
+
+    assert runner.was_aborted()
+    assert runner._engine.late_images == {}
 
 
 @pytest.mark.asyncio

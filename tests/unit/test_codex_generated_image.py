@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import json
 
 import pytest
 
@@ -26,6 +27,8 @@ def _runner(runtime: str = "sandbox", send=True):
     runner.cfg = {}
     runner.umo = UMO
     runner.sent = []
+    runner._aborted = False
+    runner._images_running = set()
 
     class _PluginCtx:
         @staticmethod
@@ -62,6 +65,10 @@ class _Engine:
     async def submit_turn(self, thread_id, request):
         self.requests.append(request)
         return {"status": self.status}
+
+
+async def _no_steer(*args, **kwargs):
+    return None
 
 
 @pytest.fixture
@@ -424,12 +431,349 @@ async def test_the_hook_does_not_steer_a_running_exec(monkeypatch, image, tmp_pa
     assert engine.requests == []
 
 
+def _late_runner(monkeypatch, tmp_path):
+    """A finished turn's runner whose report only records what it would say."""
+    import astrbot.core.tools.computer_tools.util as util
+
+    from astrbot.core.agent.runners.codex import wake
+
+    monkeypatch.setattr(util, "workspace_root", lambda umo: tmp_path / "ws")
+    reports = asyncio.Queue()
+
+    async def report(ctx, *, note, **kwargs):
+        reports.put_nowait({**kwargs, "note": await note})
+
+    monkeypatch.setattr(wake, "run_late_image_completion", report)
+    runner = _runner("none")
+    runner.run_context.context.event.role = "admin"
+    runner.run_context.context.event.get_sender_id = lambda: "alice"
+    runner.run_context.context.event.get_group_id = lambda: "30003"
+    return runner, reports
+
+
+@pytest.mark.asyncio
+async def test_a_late_image_is_sent_and_reported_as_who_started_it(
+    monkeypatch, image, tmp_path
+):
+    """回合结束后才生成好的图：照常发送，再以发起人的身份用事件告诉模型。"""
+    runner, reports = _late_runner(monkeypatch, tmp_path)
+
+    await runner.on_late_saved_image("call-1", str(image))
+    report = await asyncio.wait_for(reports.get(), 2)
+
+    assert len(runner.sent) == 1
+    assert (tmp_path / "ws" / GENERATED_IMAGE_DIR / "call-1.png").is_file()
+    assert report["session_str"] == UMO
+    assert (report["sender_id"], report["role"]) == ("alice", "admin")
+    assert report["group_id"] == "30003"
+    assert report["note"].startswith("An image you started generating earlier has")
+    assert f"{GENERATED_IMAGE_DIR}/call-1.png" in report["note"]
+    # 副本的路径就在通知里，不用再等下一条
+    assert "you will be told its path" not in report["note"]
+
+
+@pytest.mark.asyncio
+async def test_a_slow_copy_of_a_late_image_is_reported_when_done(
+    monkeypatch, image, tmp_path
+):
+    """沙箱还在启动时先把图发出去，副本就绪后才通知模型，不受回调时限影响。"""
+    runner, reports = _late_runner(monkeypatch, tmp_path)
+    release = asyncio.Event()
+    place = runner._place_generated_image
+
+    async def slow_place(path):
+        await release.wait()
+        return await place(path)
+
+    runner._place_generated_image = slow_place
+
+    await asyncio.wait_for(runner.on_late_saved_image("call-1", str(image)), 2)
+
+    assert len(runner.sent) == 1
+    assert reports.empty()
+    release.set()
+    report = await asyncio.wait_for(reports.get(), 2)
+    assert f"{GENERATED_IMAGE_DIR}/call-1.png" in report["note"]
+
+
+@pytest.mark.asyncio
+async def test_a_late_image_whose_copy_failed_says_so(monkeypatch, image, tmp_path):
+    runner, reports = _late_runner(monkeypatch, tmp_path)
+
+    async def no_place(path):
+        raise RuntimeError("sandbox gone")
+
+    runner._place_generated_image = no_place
+
+    await runner.on_late_saved_image("call-1", str(image))
+    report = await asyncio.wait_for(reports.get(), 2)
+
+    assert len(runner.sent) == 1
+    assert "sandbox gone" in report["note"]
+    assert "already been sent" in report["note"]
+
+
+@pytest.mark.asyncio
+async def test_an_image_being_delivered_as_its_turn_ends_is_not_a_failure(
+    monkeypatch, image, tmp_path
+):
+    """回调还在发图时回合结束：不能留下记录，否则随后的完成事件会被当成失败。"""
+    import astrbot.core.tools.computer_tools.util as util
+
+    monkeypatch.setattr(util, "workspace_root", lambda umo: tmp_path / "ws")
+    runner = _runner("none")
+    runner._hooked_images = set()
+    runner._images_running = {"call-1", "call-2"}
+
+    await runner._on_saved_image("call-1", str(image))
+
+    assert len(runner.sent) == 1
+    assert runner._images_running == {"call-2"}
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_turn_s_late_image_is_dropped(monkeypatch, image, tmp_path):
+    runner, reports = _late_runner(monkeypatch, tmp_path)
+    runner._aborted = True
+
+    assert await runner.on_late_saved_image("call-1", str(image)) is None
+    runner.on_late_image_failed()
+    await asyncio.sleep(0)
+
+    assert runner.sent == []
+    assert reports.empty()
+
+
+@pytest.mark.asyncio
+async def test_a_late_image_goes_to_the_turn_that_started_it():
+    """归属按调用记录：Alice 的图不会算到后来结束的 Bob 那一轮头上。"""
+    from astrbot.core.agent.runners.codex.native import CodexEngine
+
+    class _Owner:
+        def __init__(self):
+            self.calls = []
+
+        async def on_late_saved_image(self, call_id, saved_path):
+            self.calls.append(call_id)
+            return "late"
+
+    engine = CodexEngine(rt=object())
+    alice, bob = _Owner(), _Owner()
+    engine.late_images["thread-1"] = {"call-a": alice, "call-b": bob}
+
+    async def open_turn(call_id, saved_path):
+        return "open turn"
+
+    engine.saved_image_handlers["thread-1"] = open_turn
+
+    assert await engine._on_saved_image("thread-1", "call-a", "/a.png") == "late"
+    assert (alice.calls, bob.calls) == (["call-a"], [])
+    # Each fires once; a call nobody owns goes to the open turn.
+    assert await engine._on_saved_image("thread-1", "call-a", "/a.png") == "open turn"
+    assert await engine._on_saved_image("thread-1", "call-c", "/c.png") == "open turn"
+
+
+@pytest.mark.asyncio
+async def test_a_late_image_that_failed_is_reported(monkeypatch, tmp_path):
+    runner, reports = _late_runner(monkeypatch, tmp_path)
+
+    runner.on_late_image_failed()
+    report = await asyncio.wait_for(reports.get(), 2)
+
+    assert report["sender_id"] == "alice"
+    assert "failed" in report["note"]
+    assert runner.sent == []
+
+
+@pytest.mark.asyncio
+async def test_the_pump_reports_a_late_image_that_was_never_saved():
+    """保存成功时回调先取走了记录，这里还在就说明没存下来。"""
+    from astrbot.core.agent.runners.codex.native import CodexEngine, ThreadPump
+
+    class _Owner:
+        failed = 0
+
+        def on_late_image_failed(self):
+            self.failed += 1
+
+    events = [
+        {"msg": {"type": "item_completed", "item": {"id": "other", "status": "x"}}},
+        {
+            "msg": {
+                "type": "item_completed",
+                "item": {"id": "call-1", "status": "failed"},
+            }
+        },
+        None,
+    ]
+
+    class _Rt:
+        @staticmethod
+        async def next_event(thread_id):
+            event = events.pop(0)
+            return json.dumps(event) if event else None
+
+    engine = CodexEngine(rt=_Rt())
+    owner = _Owner()
+    engine.late_images["thread-1"] = {"call-1": owner}
+
+    await ThreadPump(engine, "thread-1")._run()
+
+    assert owner.failed == 1
+    assert engine.late_images["thread-1"] == {}
+
+
+@pytest.mark.asyncio
+async def test_an_interrupt_ends_the_late_images_of_its_thread():
+    """中断会结束所有代码单元，里面的图不会再有结果，记录不必留着。"""
+    from astrbot.core.agent.runners.codex.native import CodexEngine, ThreadPump
+
+    events = [
+        {"msg": {"type": "turn_aborted", "reason": "replaced"}},
+        {"msg": {"type": "turn_aborted", "reason": "interrupted"}},
+        None,
+    ]
+    seen = []
+
+    class _Rt:
+        @staticmethod
+        async def next_event(thread_id):
+            seen.append(dict(engine.late_images))
+            event = events.pop(0)
+            return json.dumps(event) if event else None
+
+    engine = CodexEngine(rt=_Rt())
+    engine.late_images["thread-1"] = {"call-1": object()}
+
+    await ThreadPump(engine, "thread-1")._run()
+
+    assert seen[1] == seen[0]  # another reason keeps them
+    assert engine.late_images == {}
+
+
+@pytest.mark.asyncio
+async def test_a_late_image_reaches_the_chat_s_thread_as_an_event(monkeypatch):
+    """走后台命令同一条路：回合在跑就插入，否则排队开新回合，回复发到会话。"""
+    from astrbot.core.agent.runners.codex import native, wake
+
+    turns = []
+
+    async def turn(ctx, event, cfg, prompt, delivery):
+        turns.append((event, prompt, delivery))
+        return True
+
+    monkeypatch.setattr(native, "try_steer", _no_steer)
+    monkeypatch.setattr(wake, "run_in_session_thread", turn)
+
+    class _Ctx:
+        @staticmethod
+        def get_config(umo=None):
+            return {"plugin_set": ["only-this"]}
+
+    async def note():
+        return "THE NOTE"
+
+    await wake.run_late_image_completion(
+        _Ctx(),
+        session_str=UMO,
+        sender_id="user-1",
+        role="member",
+        group_id="30003",
+        note=note(),
+    )
+
+    ((event, prompt, delivery),) = turns
+    assert (event.get_sender_id(), event.role, delivery) == ("user-1", "member", UMO)
+    assert event.plugins_name == ["only-this"]
+    assert "THE NOTE" in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_chat_event_with_a_full_queue_posts_no_busy_note(monkeypatch):
+    """队列满时不要让用户"再发一次"：这条事件不是用户发的。"""
+    from astrbot.core.agent.runners.codex import wake
+
+    async def busy(ctx, event, cfg, prompt):
+        return runner_mod.BUSY_NOTE
+
+    monkeypatch.setattr(wake, "run_turn_in_session", busy)
+    sent = []
+
+    class _Ctx:
+        @staticmethod
+        async def send_message(session, chain):
+            sent.append(chain)
+
+    from astrbot.core.cron.events import CronMessageEvent
+    from astrbot.core.platform.message_session import MessageSession
+
+    session = MessageSession.from_str(UMO)
+    event = CronMessageEvent(
+        context=_Ctx(),
+        session=session,
+        message="x",
+        message_type=session.message_type,
+    )
+
+    assert await wake.run_in_session_thread(_Ctx(), event, {}, "x", UMO) is False
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_chat_event_for_a_bad_session_asks_for_no_plain_report():
+    from astrbot.core.agent.runners.codex import wake
+
+    assert await wake.deliver_chat_event(
+        None, session_str="bad", sender_id="", role="", group_id="", prompt="x"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_steered_chat_event_asks_for_no_plain_report(monkeypatch):
+    from astrbot.core.agent.runners.codex import native, wake
+
+    async def steered(*args, **kwargs):
+        return 1
+
+    monkeypatch.setattr(native, "try_steer", steered)
+
+    class _Ctx:
+        @staticmethod
+        def get_config(umo=None):
+            return {}
+
+    assert await wake.deliver_chat_event(
+        _Ctx(), session_str=UMO, sender_id="u", role="member", group_id="", prompt="x"
+    )
+
+
+@pytest.mark.asyncio
+async def test_forgetting_a_thread_drops_its_image_handler():
+    from astrbot.core.agent.runners.codex.native import CodexEngine
+
+    class _Rt:
+        @staticmethod
+        async def shutdown_thread(thread_id):
+            pass
+
+    engine = CodexEngine(rt=_Rt())
+    engine.saved_image_handlers["thread-1"] = object()
+    engine.late_images["thread-1"] = {"call-1": object()}
+
+    await engine.forget_thread("thread-1")
+
+    assert engine.saved_image_handlers == {}
+    assert engine.late_images == {}
+
+
 def test_the_prompt_tells_the_model_how_to_read_an_image_result():
     """系统提示要说明生图结果没有 content，否则模型遍历不到内容，以为没生成。"""
     prompt = runner_mod.DEFAULT_SYSTEM_PROMPT
     assert "`generatedImage(result)`" in prompt
     assert '"yield_time_ms": 120000' in prompt
     assert "`wait`" in prompt
+    assert "do not generate it again" in prompt
+    assert "later steps of that script may not run" in " ".join(prompt.split())
 
 
 @pytest.mark.asyncio

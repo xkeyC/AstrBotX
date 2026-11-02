@@ -8,6 +8,7 @@ of an existing task, so the agent performs it instead of scheduling another.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from typing import Any
 
 from astrbot.core import content_moderation, logger
@@ -247,23 +248,24 @@ def build_background_exec_prompt(session_id: str, exit_code: int, output: str) -
     return "\n".join(lines)
 
 
-async def run_background_exec_completion(
+async def deliver_chat_event(
     ctx: Any,
     *,
     session_str: str,
     sender_id: str,
     role: str,
-    group_id: str = "",
-    session_id: str,
-    exit_code: int,
-    output: str,
-) -> None:
-    """Delivers a finished background command into its own chat.
+    group_id: str,
+    prompt: str,
+) -> bool:
+    """Delivers something that finished after its turn into its own chat.
 
-    It arrives as a message from whoever started the command, so it follows the
-    same rules any message of theirs would: if their own turn is still running
-    it is steered into that turn and answered in the same reply, and otherwise
-    it queues behind whatever else that chat is doing.
+    It arrives as a message from whoever started it, so it follows the same
+    rules any message of theirs would: if their own turn is still running it is
+    steered into that turn and answered in the same reply, and otherwise it
+    queues behind whatever else that chat is doing.
+
+    Returns:
+        False when the turn produced no reply, so the caller may report plainly.
     """
     from astrbot.core.agent.runners.codex.codex_agent_runner import (
         build_turn_input,
@@ -273,18 +275,11 @@ async def run_background_exec_completion(
     from astrbot.core.cron.events import CronMessageEvent
     from astrbot.core.permission_rules import CONFIG_KEY, policy_for_event
 
-    # As a tool's result: the output reaches the model inside the prompt.
-    output = await content_moderation.filter_tool_text(
-        output,
-        content_moderation.platform_mode(session_str.split(":", 1)[0]),
-        label=f"background command {session_id}",
-    )
-    prompt = build_background_exec_prompt(session_id, exit_code, output)
     try:
         session = MessageSession.from_str(session_str)
     except Exception as e:  # noqa: BLE001
-        logger.error("Invalid session for background command %s: %s", session_id, e)
-        return
+        logger.error("Invalid session for a chat event: %s", e)
+        return True
     event = CronMessageEvent(
         context=ctx,
         session=session,
@@ -293,7 +288,7 @@ async def run_background_exec_completion(
     )
     if sender_id:
         event.message_obj.sender.user_id = sender_id
-    # Group rules match as for the message that started the command.
+    # Group rules match as for the message that started it.
     event.message_obj.group_id = group_id
     event.role = role or "member"
     cfg = ctx.get_config(umo=event.unified_msg_origin)
@@ -317,9 +312,85 @@ async def run_background_exec_completion(
             # The steered message's turn answers it; this event's trace ends here.
             with trace_execution(event.trace):
                 pass
-            return
+            return True
+    return await run_in_session_thread(ctx, event, cfg, prompt, session_str)
 
-    if not await run_in_session_thread(ctx, event, cfg, prompt, session_str):
+
+def build_late_image_prompt(note: str) -> str:
+    """Prompt announcing a generated image that finished after its turn."""
+    lines = [
+        "<generated_image_finished>",
+        note,
+        "Its turn was already over, so this is how you hear of it. Your final "
+        "reply is sent to the chat; if nothing needs to be said, reply with an "
+        "empty message.",
+        "</generated_image_finished>",
+    ]
+    return "\n".join(lines)
+
+
+async def run_late_image_completion(
+    ctx: Any,
+    *,
+    session_str: str,
+    sender_id: str,
+    role: str,
+    group_id: str,
+    note: Awaitable[str],
+) -> None:
+    """Tells a chat's thread about an image that ended after its turn.
+
+    Args:
+        note: What happened, which may take a while to find out (the copy into
+            a sandbox that is still booting).
+    """
+    try:
+        if not await deliver_chat_event(
+            ctx,
+            session_str=session_str,
+            sender_id=sender_id,
+            role=role,
+            group_id=group_id,
+            prompt=build_late_image_prompt(await note),
+        ):
+            logger.warning("Late image report to %s produced no reply", session_str)
+    except Exception as e:  # noqa: BLE001
+        logger.error("Could not report a late image to %s: %s", session_str, e)
+
+
+async def run_background_exec_completion(
+    ctx: Any,
+    *,
+    session_str: str,
+    sender_id: str,
+    role: str,
+    group_id: str = "",
+    session_id: str,
+    exit_code: int,
+    output: str,
+) -> None:
+    """Delivers a finished background command into its own chat.
+
+    It arrives as a message from whoever started the command, so it follows the
+    same rules any message of theirs would: if their own turn is still running
+    it is steered into that turn and answered in the same reply, and otherwise
+    it queues behind whatever else that chat is doing.
+    """
+    # As a tool's result: the output reaches the model inside the prompt.
+    output = await content_moderation.filter_tool_text(
+        output,
+        content_moderation.platform_mode(session_str.split(":", 1)[0]),
+        label=f"background command {session_id}",
+    )
+    prompt = build_background_exec_prompt(session_id, exit_code, output)
+    if not await deliver_chat_event(
+        ctx,
+        session_str=session_str,
+        sender_id=sender_id,
+        role=role,
+        group_id=group_id,
+        prompt=prompt,
+    ):
         logger.warning(
             "Background command %s produced no reply; reporting it plainly.",
             session_id,
