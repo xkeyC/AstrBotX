@@ -385,7 +385,10 @@ class FutureTaskTool(FunctionTool[AstrAgentContext]):
                     f"error: cron job {job_id} was not created by you, so you cannot "
                     "delete it. Only whoever created it can delete it."
                 )
-            await cron_mgr.delete_job(str(job_id))
+            # A run deleting its own task still finishes and delivers its reply.
+            await cron_mgr.delete_job(
+                str(job_id), keep_task=event.get_extra("cron_run_task")
+            )
             return f"Deleted cron job {job_id}."
 
         if action == "list":

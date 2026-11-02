@@ -269,7 +269,9 @@ class CronJobManager:
             self._schedule_job(job)
         return job
 
-    async def delete_job(self, job_id: str) -> None:
+    async def delete_job(
+        self, job_id: str, *, keep_task: asyncio.Task | None = None
+    ) -> None:
         """Remove a schedule and drain its active runs before deleting its row.
 
         Runs that have already started are cancelled and drained. Runs that
@@ -277,6 +279,8 @@ class CronJobManager:
 
         Args:
             job_id: Job to delete, including any currently executing run.
+            keep_task: A run to leave alone, for a run deleting its own job from
+                another task (a Codex tool call).
         """
         self._deleting_jobs[job_id] = self._deleting_jobs.get(job_id, 0) + 1
         try:
@@ -285,7 +289,7 @@ class CronJobManager:
             tasks = [
                 task
                 for task in self._running_tasks.get(job_id, set())
-                if task is not asyncio.current_task() and not task.done()
+                if task not in (asyncio.current_task(), keep_task) and not task.done()
             ]
             for task in tasks:
                 task.cancel()
@@ -502,6 +506,9 @@ class CronJobManager:
                 "session": delivery_session_str,
             },
             "cron_payload": payload,
+            # Codex tools run in tasks of their own: a tool of this run that
+            # deletes its job names the run, so it is not cancelled.
+            "cron_run_task": asyncio.current_task(),
         }
 
         await self._woke_main_agent(

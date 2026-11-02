@@ -219,6 +219,41 @@ async def test_future_task_edit_rejects_same_umo_different_sender():
 
 
 @pytest.mark.asyncio
+async def test_future_task_run_deleting_its_job_names_the_run():
+    """Only a cron run has a task to spare; a chat's delete cancels every run."""
+    from astrbot.core.cron.events import CronMessageEvent
+    from astrbot.core.platform.message_session import MessageSession
+
+    tool = FutureTaskTool()
+    session = MessageSession.from_str("test:GroupMessage:shared")
+    run_task = object()
+    for extras, keep_task in (({"cron_run_task": run_task}, run_task), ({}, None)):
+        cron_mgr = SimpleNamespace(
+            db=SimpleNamespace(
+                get_cron_job=AsyncMock(
+                    return_value=_job(
+                        "job-1", umo="test:GroupMessage:shared", sender_id="user-1"
+                    )
+                )
+            ),
+            delete_job=AsyncMock(),
+        )
+        event = CronMessageEvent(
+            context=MagicMock(),
+            session=session,
+            message="task",
+            extras=extras,
+            message_type=session.message_type,
+        )
+        event.message_obj.sender.user_id = "user-1"
+        event.role = "admin"
+
+        await tool.call(_context(cron_mgr, event=event), action="delete", job_id="job-1")
+
+        cron_mgr.delete_job.assert_awaited_once_with("job-1", keep_task=keep_task)
+
+
+@pytest.mark.asyncio
 async def test_future_task_delete_rejects_same_umo_different_sender():
     """Same-session users should not delete another sender's task."""
     tool = FutureTaskTool()
@@ -259,7 +294,7 @@ async def test_future_task_admin_can_delete_other_members_group_job():
     )
 
     assert result == "Deleted cron job job-1."
-    cron_mgr.delete_job.assert_awaited_once_with("job-1")
+    cron_mgr.delete_job.assert_awaited_once_with("job-1", keep_task=None)
 
 
 @pytest.mark.asyncio

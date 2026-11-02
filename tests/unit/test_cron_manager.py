@@ -318,6 +318,43 @@ class TestDeleteJob:
         assert "test-job-id" not in cron_manager._basic_handlers
 
     @pytest.mark.asyncio
+    async def test_a_run_deleting_its_job_from_a_tool_task_finishes(
+        self, cron_manager, mock_db, sample_cron_job
+    ):
+        """A Codex tool runs in its own task: it spares its run, and only that."""
+        sample_cron_job.job_type = "active_agent"
+        sample_cron_job.run_once = False
+        sample_cron_job.payload = {}
+        mock_db.get_cron_job.return_value = sample_cron_job
+        job_id = sample_cron_job.job_id
+        other_started = asyncio.Event()
+        finished = []
+
+        async def wake(*, extras, **kwargs):
+            if finished == [] and not other_started.is_set():
+                other_started.set()
+                await asyncio.Event().wait()  # the overlapping run stays busy
+            await asyncio.create_task(
+                cron_manager.delete_job(job_id, keep_task=extras["cron_run_task"])
+            )
+            finished.append(job_id)
+
+        cron_manager._woke_main_agent = wake
+        other = asyncio.create_task(cron_manager._run_job(job_id))
+        await asyncio.wait_for(other_started.wait(), 2)
+
+        await asyncio.wait_for(cron_manager._run_job(job_id), 2)
+
+        assert finished == [job_id]
+        assert other.cancelled()
+        mock_db.delete_cron_job.assert_awaited_once_with(job_id)
+        statuses = [
+            call.kwargs.get("status")
+            for call in mock_db.update_cron_job.await_args_list
+        ]
+        assert "completed" in statuses
+
+    @pytest.mark.asyncio
     async def test_delete_job_cancels_run_blocked_in_row_lookup(
         self, cron_manager, mock_db, sample_cron_job
     ):
