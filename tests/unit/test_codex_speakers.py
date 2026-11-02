@@ -146,8 +146,44 @@ async def _turn(sender_id, name, *, accepted=True, platform="aiocqhttp", req=Non
     thread_id, _ = await runner._open_thread(_Engine())
     turn_input = runner._turn_request(None)["input"]
     if accepted:
-        await runner._remember_sender(thread_id)
+        await runner._remember_accepted(thread_id, False)
     return turn_input
+
+
+@pytest.mark.asyncio
+async def test_a_tool_replacement_is_sent_until_a_turn_accepts_it(prefs):
+    """A failed replacement must not look done: the thread would keep old tools."""
+    first = _runner("1", "Alice", "aiocqhttp")
+    thread_id, update = await first._open_thread(_Engine())
+    assert update is None
+    await first._remember_accepted(thread_id, False)
+
+    changed = _runner("1", "Alice", "aiocqhttp")
+    changed.bridge.fingerprint = "fp2"
+    _, update = await changed._open_thread(_Engine())
+    assert update is not None
+
+    retried = _runner("1", "Alice", "aiocqhttp")
+    retried.bridge.fingerprint = "fp2"
+    _, update = await retried._open_thread(_Engine())
+    assert update is not None
+    await retried._remember_accepted(thread_id, True)
+
+    settled = _runner("1", "Alice", "aiocqhttp")
+    settled.bridge.fingerprint = "fp2"
+    _, update = await settled._open_thread(_Engine())
+    assert update is None
+
+    # Refused after replacing: going back to the first set must still send it.
+    refused = _runner("1", "Alice", "aiocqhttp")
+    refused.bridge.fingerprint = "fp3"
+    _, update = await refused._open_thread(_Engine())
+    assert update is not None
+
+    back = _runner("1", "Alice", "aiocqhttp")
+    back.bridge.fingerprint = "fp2"
+    _, update = await back._open_thread(_Engine())
+    assert update is not None
 
 
 def _notes(turn_input):

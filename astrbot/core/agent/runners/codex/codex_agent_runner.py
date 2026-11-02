@@ -855,19 +855,29 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
             value={
                 "thread_id": info["thread_id"],
                 "rollout_path": info.get("rollout_path") or state.get("rollout_path"),
-                "tools_fp": self.bridge.fingerprint,
+                # A replacement only counts once Codex accepted the turn that
+                # carries it (_remember_accepted). Until then the thread's tools
+                # are unknown, so the next turn sends its tools whatever they are.
+                "tools_fp": None
+                if tools_update is not None
+                else self.bridge.fingerprint,
                 "personas": catalog,
                 # Who triggered the latest turn the model saw; updated once
-                # this turn is accepted (_remember_sender).
+                # this turn is accepted (_remember_accepted).
                 "last_sender": previous,
             },
         )
         return info["thread_id"], tools_update
 
-    async def _remember_sender(self, thread_id: str) -> None:
-        """Records this turn's sender once Codex accepted the turn."""
+    async def _remember_accepted(self, thread_id: str, tools_replaced: bool) -> None:
+        """Records this turn's sender and tool set once Codex accepted the turn."""
+        update: JsonObject = {}
         sender = getattr(self, "_turn_sender", None)
-        if not sender or not sender.get("id"):
+        if sender and sender.get("id"):
+            update["last_sender"] = sender
+        if tools_replaced:
+            update["tools_fp"] = self.bridge.fingerprint
+        if not update:
             return
         try:
             state = await sp.get_async(
@@ -879,10 +889,10 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                 scope="umo",
                 scope_id=self.umo,
                 key=CODEX_THREAD_STATE_KEY,
-                value={**state, "last_sender": sender},
+                value={**state, **update},
             )
         except Exception as e:  # noqa: BLE001
-            logger.debug("Could not record the turn's sender: %s", e)
+            logger.debug("Could not record the accepted turn: %s", e)
 
     # ------------------------------------------------------------------- turn
 
@@ -1237,7 +1247,7 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                     # so the request's rate-limit use is spent.
                     keep_group_history(self._event())
                     keep_rate_limit_use(self._event())
-                    await self._remember_sender(thread_id)
+                    await self._remember_accepted(thread_id, tools_update is not None)
                     while True:
                         remaining = timeout - (time.monotonic() - started)
                         if remaining <= 0:
