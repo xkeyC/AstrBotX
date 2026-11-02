@@ -348,3 +348,166 @@ async def test_cron_uses_event_scope(frames, monkeypatch, failure_at):
     assert "test:FriendMessage:cron-execution-test" not in active_event_registry._events
     assert not get_current_span().get_span_context().is_valid
     assert _log_context.get() is None
+
+
+def _cron_event(ctx):
+    from astrbot.core.cron.events import CronMessageEvent
+    from astrbot.core.platform.message_session import MessageSession
+
+    session = MessageSession.from_str("test:FriendMessage:codex-wake-test")
+    return CronMessageEvent(
+        context=ctx,
+        session=session,
+        message="task",
+        message_type=session.message_type,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_at", [None, "turn", "delivery"])
+async def test_codex_wake_uses_event_scope(frames, monkeypatch, failure_at):
+    """A Codex wake skips the pipeline, so it must own its event's scope.
+
+    Args:
+        frames: Captured trace snapshots.
+        monkeypatch: Pytest patch manager.
+        failure_at: Optional execution step that fails.
+    """
+    from astrbot.core.agent.runners.codex import wake
+
+    event = None
+
+    async def turn(ctx, current, cfg, prompt):
+        assert frames[-1]["trace"]["state"] == "running"
+        assert current._execution_active
+        assert _log_context.get().platform_id == "test"
+        assert event.unified_msg_origin in active_event_registry._events
+        if failure_at == "turn":
+            raise RuntimeError("turn failed")
+        return "answer"
+
+    async def send(session, chain):
+        assert frames[-1]["trace"]["state"] == "running"
+        if failure_at == "delivery":
+            raise RuntimeError("delivery failed")
+        return True
+
+    monkeypatch.setattr(wake, "run_turn_in_session", turn)
+    monkeypatch.setattr(
+        "astrbot.core.voice.chat.announce", AsyncMock(return_value=False)
+    )
+    ctx = MagicMock()
+    ctx.send_message = AsyncMock(side_effect=send)
+    event = _cron_event(ctx)
+    run = wake.run_in_session_thread(
+        ctx, event, {}, "prompt", event.unified_msg_origin
+    )
+    if failure_at:
+        with pytest.raises(RuntimeError):
+            await run
+    else:
+        assert await run is True
+    assert frames[-1]["trace"]["state"] == "completed"
+    assert frames[-1]["span"]["status"]["code"] == (2 if failure_at else 1)
+    assert event.unified_msg_origin not in active_event_registry._events
+    assert _log_context.get() is None
+
+
+@pytest.mark.asyncio
+async def test_codex_voice_turn_ends_its_trace(frames, monkeypatch):
+    """Voice requests call the turn directly, without the delivery scope.
+
+    Args:
+        frames: Captured trace snapshots.
+        monkeypatch: Pytest patch manager.
+    """
+    from astrbot.core.agent.runners.codex import codex_agent_runner, wake
+    from astrbot.core.pipeline.process_stage.method.agent_sub_stages import (
+        codex_request,
+    )
+
+    class Runner:
+        async def reset(self, **kwargs):
+            pass
+
+        def request_stop(self):
+            pass
+
+        async def step_until_done(self):
+            assert frames[-1]["trace"]["state"] == "running"
+            yield None
+
+        def was_aborted(self):
+            return False
+
+        def get_final_llm_resp(self):
+            return SimpleNamespace(role="assistant", completion_text=" answer ")
+
+    import astrbot.core.astr_agent_context as agent_context
+
+    monkeypatch.setattr(codex_agent_runner, "CodexAgentRunner", Runner)
+    monkeypatch.setattr(agent_context, "AstrAgentContext", lambda **kw: kw)
+    monkeypatch.setattr(agent_context, "AgentContextWrapper", lambda **kw: kw)
+    monkeypatch.setattr(codex_request, "prepare_codex_request", AsyncMock())
+    event = _cron_event(MagicMock())
+
+    assert await wake.run_turn_in_session(MagicMock(), event, {}, "prompt") == "answer"
+    assert frames[-1]["trace"]["state"] == "completed"
+    assert event.unified_msg_origin not in active_event_registry._events
+
+
+@pytest.mark.asyncio
+async def test_steered_background_command_ends_its_trace(frames, monkeypatch):
+    """A result steered into a running turn leaves no trace running.
+
+    Args:
+        frames: Captured trace snapshots.
+        monkeypatch: Pytest patch manager.
+    """
+    from astrbot.core.agent.runners.codex import native, wake
+
+    monkeypatch.setattr(native, "try_steer", AsyncMock(return_value=1))
+    monkeypatch.setattr(wake.content_moderation, "platform_mode", lambda _: "off")
+    monkeypatch.setattr(
+        wake.content_moderation, "filter_tool_text", AsyncMock(return_value="out")
+    )
+    monkeypatch.setattr(wake, "run_in_session_thread", AsyncMock())
+    ctx = MagicMock()
+    ctx.get_config.return_value = {}
+
+    await wake.run_background_exec_completion(
+        ctx,
+        session_str="test:FriendMessage:codex-wake-test",
+        sender_id="user-1",
+        role="member",
+        session_id="shell-1",
+        exit_code=0,
+        output="out",
+    )
+
+    wake.run_in_session_thread.assert_not_awaited()
+    assert frames[-1]["trace"]["state"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_background_wake_moderates_before_opening_a_trace(frames, monkeypatch):
+    """A moderation failure must not leave a trace running.
+
+    Args:
+        frames: Captured trace snapshots.
+        monkeypatch: Pytest patch manager.
+    """
+    from astrbot.core.agent.runners.codex import wake
+
+    monkeypatch.setattr(wake.content_moderation, "platform_mode", lambda _: "off")
+    monkeypatch.setattr(
+        wake.content_moderation,
+        "filter_tool_text",
+        AsyncMock(side_effect=RuntimeError("moderation failed")),
+    )
+    origin = SimpleNamespace(unified_msg_origin="test:FriendMessage:codex-wake-test")
+
+    with pytest.raises(RuntimeError):
+        await wake.run_codex_background_wake(MagicMock(), origin, {"result": "out"})
+
+    assert frames == []

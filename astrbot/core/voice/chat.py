@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 from astrbot import logger
 from astrbot.core import content_moderation
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.utils.trace import trace_execution
 
 if TYPE_CHECKING:
     from .session import VoiceSession
@@ -210,6 +211,9 @@ class VoiceChat:
             return {}
         # The speaker's rules, as the chat's turns read them.
         event = self._event(ctx, "")
+        # Only read for its rules: no turn will end its trace.
+        with trace_execution(event.trace):
+            pass
         event.set_extra(
             EVENT_EXTRA_KEY,
             policy_for_event(event, chat_cfg.get(CONFIG_KEY) or []),
@@ -233,6 +237,9 @@ class VoiceChat:
             return ""
         try:
             event = self._event(ctx, "")
+            # Only read for its rules: no turn will end its trace.
+            with trace_execution(event.trace):
+                pass
             # The rules as the chat's turns read them (codex_request).
             policy = policy_for_event(
                 event, ctx.get_config(umo=self.umo).get(CONFIG_KEY) or []

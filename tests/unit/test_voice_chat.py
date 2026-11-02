@@ -164,6 +164,24 @@ def persona_context(monkeypatch) -> FakeContext:
 
 
 @pytest.mark.asyncio
+async def test_an_event_read_only_for_its_rules_ends_its_trace(monkeypatch):
+    persona_context(monkeypatch)
+    chat = VoiceChat(umo="qq:FriendMessage:42", private=True, sender_id="42")
+    events = []
+    make_event = chat._event
+
+    def recording_event(ctx, message):
+        events.append(make_event(ctx, message))
+        return events[-1]
+
+    chat._event = recording_event
+
+    await chat.voice_persona()
+
+    assert events[0].trace._finished
+
+
+@pytest.mark.asyncio
 async def test_voice_persona_comes_from_the_chats_persona(monkeypatch):
     ctx = persona_context(monkeypatch)
     chat = VoiceChat(umo="qq:FriendMessage:42", private=True, sender_id="42")

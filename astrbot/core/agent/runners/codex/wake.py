@@ -11,9 +11,12 @@ from __future__ import annotations
 from typing import Any
 
 from astrbot.core import content_moderation, logger
+from astrbot.core.log import log_context
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.platform.astr_message_event import event_context
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.provider.entities import ProviderRequest
+from astrbot.core.utils.trace import trace_execution
 
 
 def build_cron_prompt(cron_job: dict, payload: dict) -> str:
@@ -90,17 +93,23 @@ async def run_in_session_thread(
     ctx: Any, event: Any, cfg: dict, prompt: str, delivery_session_str: str
 ) -> bool:
     """Run one Codex turn with ``prompt`` in the event session's thread."""
-    text = await run_turn_in_session(ctx, event, cfg, prompt)
-    if text is None:
-        return False
-    if text and delivery_session_str:
-        await ctx.send_message(delivery_session_str, MessageChain().message(text))
-        # A voice conversation of that chat hears of it too (its model
-        # decides whether to tell it).
-        from astrbot.core.voice.chat import announce
+    # The event's trace ends after delivery, like a message's.
+    with (
+        log_context(event.get_platform_id(), event.get_platform_name()),
+        event_context(event),
+        trace_execution(event.trace),
+    ):
+        text = await run_turn_in_session(ctx, event, cfg, prompt)
+        if text is None:
+            return False
+        if text and delivery_session_str:
+            await ctx.send_message(delivery_session_str, MessageChain().message(text))
+            # A voice conversation of that chat hears of it too (its model
+            # decides whether to tell it).
+            from astrbot.core.voice.chat import announce
 
-        await announce(delivery_session_str, text)
-    return True
+            await announce(delivery_session_str, text)
+        return True
 
 
 async def run_turn_in_session(
@@ -129,8 +138,11 @@ async def run_turn_in_session(
     req.prompt = prompt
     # Active in the chat like any message's turn, from the start, so /stop
     # reaches it (and counts it) at any point.
-    active_event_registry.register(event)
-    try:
+    with (
+        log_context(event.get_platform_id(), event.get_platform_name()),
+        event_context(event),
+        trace_execution(event.trace),
+    ):
         await prepare_codex_request(event, req, ctx, cfg, runner_cfg)
         req.prompt = prompt
         runner = CodexAgentRunner()
@@ -150,8 +162,6 @@ async def run_turn_in_session(
             runner.request_stop()
         async for _ in runner.step_until_done():
             pass
-    finally:
-        active_event_registry.unregister(event)
     if runner.was_aborted():
         # Stopped: nothing to deliver. A background command's caller then
         # reports its result plainly, so the result itself is not lost.
@@ -187,6 +197,14 @@ async def run_codex_background_wake(
     from astrbot.core.cron.events import CronMessageEvent
 
     session = MessageSession.from_str(origin_event.unified_msg_origin)
+    # The result reaches the model inside the prompt, past the tool bridge
+    # that checks the results of tools run in a turn.
+    result = await content_moderation.filter_tool_text(
+        str(task_result.get("result") or ""),
+        content_moderation.platform_mode(session.platform_id),
+        label=f"background {task_result.get('tool_name', '')}",
+    )
+    task_result = {**task_result, "result": result}
     event = CronMessageEvent(
         context=ctx,
         session=session,
@@ -198,14 +216,6 @@ async def run_codex_background_wake(
     event.message_obj.group_id = str(origin_event.get_group_id() or "")
     event.role = origin_event.role
     cfg = ctx.get_config(umo=origin_event.unified_msg_origin) or {}
-    # The result reaches the model inside the prompt, past the tool bridge
-    # that checks the results of tools run in a turn.
-    result = await content_moderation.filter_tool_text(
-        str(task_result.get("result") or ""),
-        content_moderation.platform_mode(session.platform_id),
-        label=f"background {task_result.get('tool_name', '')}",
-    )
-    task_result = {**task_result, "result": result}
     prompt = build_background_prompt(task_result, origin_event.message_str or "")
     await run_in_session_thread(
         ctx, event, cfg, prompt, origin_event.unified_msg_origin
@@ -291,6 +301,9 @@ async def run_background_exec_completion(
             scopes=turn_scopes(event),
         )
         if steered is not None:
+            # The steered message's turn answers it; this event's trace ends here.
+            with trace_execution(event.trace):
+                pass
             return
 
     if not await run_in_session_thread(ctx, event, cfg, prompt, session_str):
