@@ -99,8 +99,11 @@ async def run_in_session_thread(
         event_context(event),
         trace_execution(event.trace),
     ):
+        from astrbot.core.agent.runners.codex.codex_agent_runner import BUSY_NOTE
+
         text = await run_turn_in_session(ctx, event, cfg, prompt)
-        if text is None:
+        # A full queue: the chat did not ask for anything, so no "send it again".
+        if text is None or text == BUSY_NOTE:
             return False
         if text and delivery_session_str:
             await ctx.send_message(delivery_session_str, MessageChain().message(text))
@@ -216,10 +219,17 @@ async def run_codex_background_wake(
     event.message_obj.group_id = str(origin_event.get_group_id() or "")
     event.role = origin_event.role
     cfg = ctx.get_config(umo=origin_event.unified_msg_origin) or {}
+    # Only the session's enabled plugins add tools and hooks, as for a chat.
+    enabled_plugins = cfg.get("plugin_set", ["*"])
+    event.plugins_name = None if enabled_plugins == ["*"] else enabled_plugins
     prompt = build_background_prompt(task_result, origin_event.message_str or "")
-    await run_in_session_thread(
+    if not await run_in_session_thread(
         ctx, event, cfg, prompt, origin_event.unified_msg_origin
-    )
+    ):
+        logger.warning(
+            "Background task result for %s produced no reply",
+            origin_event.unified_msg_origin,
+        )
 
 
 def build_background_exec_prompt(session_id: str, exit_code: int, output: str) -> str:
@@ -287,6 +297,9 @@ async def run_background_exec_completion(
     event.message_obj.group_id = group_id
     event.role = role or "member"
     cfg = ctx.get_config(umo=event.unified_msg_origin)
+    # Only the session's enabled plugins add tools and hooks, as for a chat.
+    enabled_plugins = cfg.get("plugin_set", ["*"])
+    event.plugins_name = None if enabled_plugins == ["*"] else enabled_plugins
     if sender_id:
         # Steered only into a turn of the same person in the same role.
         policy_for_event(event, cfg.get(CONFIG_KEY) or [])
