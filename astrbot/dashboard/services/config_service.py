@@ -11,8 +11,6 @@ from typing import Any, get_args
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from astrbot.core import file_token_service, logger
-from astrbot.core.computer import computer_client
-from astrbot.core.computer.booters.local import LocalShellComponent
 from astrbot.core.config.agent_runner import normalize_agent_runner
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.config.default import (
@@ -21,7 +19,6 @@ from astrbot.core.config.default import (
     CONFIG_METADATA_3_SYSTEM,
     DEFAULT_CONFIG,
     DEFAULT_VALUE_MAP,
-    get_local_permission_defaults,
 )
 from astrbot.core.config.i18n_utils import ConfigMetadataI18n
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
@@ -213,16 +210,13 @@ def validate_config(
     data,
     schema: dict,
     is_core: bool,
-    *,
-    runtime: dict | None = None,
 ) -> tuple[list[str], dict]:
-    """Validate configuration values and normalize linked Local permissions.
+    """Validate configuration values.
 
     Args:
         data: Submitted configuration, normalized in place.
         schema: Configuration metadata used for validation.
         is_core: Whether this is a core configuration rather than a plugin.
-        runtime: Startup runtime snapshot for platform-specific defaults.
 
     Returns:
         Validation errors and the normalized configuration.
@@ -333,46 +327,6 @@ def validate_config(
             **schema["misc_config_group"]["metadata"],
         }
         validate(data, meta_all)
-        provider_settings = data.get("provider_settings", {})
-        defaults = get_local_permission_defaults(runtime.get("os") if runtime else None)
-        permissions = (
-            provider_settings.get("computer_use_local_permissions", {})
-            if isinstance(provider_settings, dict)
-            else {}
-        )
-        if not isinstance(permissions, dict):
-            errors.append("Local computer permissions must be an object.")
-        else:
-            for role in ("member", "admin"):
-                if role not in permissions:
-                    continue
-                policy = permissions[role]
-                if not isinstance(policy, dict):
-                    errors.append(
-                        f"Local computer permissions for {role} must be an object."
-                    )
-                    continue
-                for key in ("allow_execution", "allow_network"):
-                    if key in policy and not isinstance(policy[key], bool):
-                        errors.append(
-                            f"Local permission {role}.{key} must be a boolean."
-                        )
-                scope = policy.get(
-                    "filesystem_scope", defaults[role]["filesystem_scope"]
-                )
-                if scope not in ("none", "workspace", "host"):
-                    errors.append(
-                        f"Invalid local filesystem scope for {role}: {scope}."
-                    )
-                if scope == "none":
-                    policy["allow_execution"] = False
-                    policy["allow_network"] = False
-                elif (
-                    policy.get("allow_execution", defaults[role]["allow_execution"])
-                    is False
-                ):
-                    policy["allow_network"] = False
-
     else:
         validate(data, schema)
 
@@ -397,23 +351,6 @@ def _log_computer_config_changes(
             old_runtime,
             new_runtime,
         )
-
-    old_permissions = old_ps.get("computer_use_local_permissions", {})
-    new_permissions = new_ps.get("computer_use_local_permissions", {})
-    for role in ("member", "admin"):
-        old_role = old_permissions.get(role, {})
-        new_role = new_permissions.get(role, {})
-        for key in ("allow_execution", "allow_network", "filesystem_scope"):
-            old_value = old_role.get(key)
-            new_value = new_role.get(key)
-            if old_value != new_value:
-                log_info(
-                    "[Computer] Config changed: local_permissions.%s.%s %s -> %s",
-                    role,
-                    key,
-                    old_value,
-                    new_value,
-                )
 
     old_sandbox = old_ps.get("sandbox", {})
     new_sandbox = new_ps.get("sandbox", {})
@@ -513,8 +450,6 @@ def save_config(
     post_config: dict,
     config: AstrBotConfig,
     is_core: bool = False,
-    *,
-    runtime: dict | None = None,
 ) -> None:
     """Validate and persist a dashboard configuration update.
 
@@ -522,7 +457,6 @@ def save_config(
         post_config: Submitted configuration to validate and save.
         config: Existing configuration and persistence target.
         is_core: Whether this is a core configuration rather than a plugin.
-        runtime: Startup runtime snapshot supplied by the profile service.
 
     Raises:
         ValueError: If configuration validation fails.
@@ -538,7 +472,6 @@ def save_config(
                 post_config,
                 CONFIG_METADATA_2,
                 is_core,
-                runtime=runtime,
             )
         else:
             errors, post_config = validate_config(
@@ -563,13 +496,10 @@ class ConfigProfileService:
         self,
         core_lifecycle: AstrBotCoreLifecycle,
         db: BaseDatabase | None = None,
-        *,
-        runtime: dict,
     ) -> None:
         self.core_lifecycle = core_lifecycle
         self.acm = core_lifecycle.astrbot_config_mgr
         self.db = db
-        self.runtime = runtime
 
     def get_profile_schema(self) -> dict:
         return {
@@ -649,7 +579,7 @@ class ConfigProfileService:
                 profile_config["agent_runner"]
             )
         errors, profile_config = validate_config(
-            profile_config, CONFIG_METADATA_2, is_core=True, runtime=self.runtime
+            profile_config, CONFIG_METADATA_2, is_core=True
         )
         if errors:
             raise ValueError(f"Configuration validation failed: {errors}")
@@ -756,12 +686,7 @@ class ConfigProfileService:
             _set_nested_value(config, ("dashboard", "totp", "recovery_code_hash"), "")
 
         set_pending_totp_secret(None)
-        save_config(
-            config, self.acm.confs[config_id], is_core=True, runtime=self.runtime
-        )
-        booter = computer_client.local_booter
-        if booter is not None and isinstance(booter.shell, LocalShellComponent):
-            await booter.shell.shutdown_sessions(invalid_only=True)
+        save_config(config, self.acm.confs[config_id], is_core=True)
         if protected_2fa_changed and self.db is not None:
             await revoke_user_trusted_devices(self.db)
         await self.core_lifecycle.reload_pipeline_scheduler(config_id)

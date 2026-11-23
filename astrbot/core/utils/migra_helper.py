@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import platform
 import traceback
 from pathlib import Path
 from typing import Any
@@ -218,7 +217,7 @@ def migrate_config_on_load(config: dict[str, Any], config_path: Path) -> bool:
     changed = _migrate_qq_call_voice(config, config_path) or changed
     changed = _migrate_local_infra(config) or changed
     changed = _migrate_web_search_settings(config) or changed
-    changed = _migrate_windows_member_scope(config) or changed
+    changed = _migrate_local_runtime_removal(config) or changed
     return changed
 
 
@@ -327,10 +326,12 @@ def _migrate_web_search_settings(config: dict[str, Any]) -> bool:
     return True
 
 
-def _migrate_windows_member_scope(config: dict[str, Any]) -> bool:
-    """Upstream v4.29.1 (config_version 5): on Windows the members' old
-    default Local policy (no execution, no network, no files) becomes
-    workspace file access, once; code execution stays off.
+def _migrate_local_runtime_removal(config: dict[str, Any]) -> bool:
+    """Config version 6: the local Computer Use runtime was removed.
+
+    A ``computer_use_runtime`` of ``local`` becomes ``none`` -- never the
+    sandbox, which would move the agent's work to another machine without the
+    user choosing it -- and the local permission policies are dropped.
 
     Args:
         config: Mutable AstrBot configuration loaded from disk.
@@ -339,31 +340,19 @@ def _migrate_windows_member_scope(config: dict[str, Any]) -> bool:
         Whether the configuration changed.
     """
     config_version = config.get("config_version")
-    if isinstance(config_version, int) and config_version >= 5:
+    if isinstance(config_version, int) and config_version >= 6:
         return False
-    provider_settings = config.get("provider_settings", {})
-    permissions = (
-        provider_settings.get("computer_use_local_permissions", {})
-        if isinstance(provider_settings, dict)
-        else {}
-    )
-    if (
-        platform.system() == "Windows"
-        and isinstance(permissions, dict)
-        and permissions.get("member")
-        == {
-            "allow_execution": False,
-            "allow_network": False,
-            "filesystem_scope": "none",
-        }
-    ):
-        # The old default and an explicit disabled policy are indistinguishable.
-        permissions["member"]["filesystem_scope"] = "workspace"
-        logger.info(
-            "Migrated Windows member Local file access from disabled to workspace; "
-            "code execution and execution network access remain disabled."
-        )
-    config["config_version"] = 5
+    provider_settings = config.get("provider_settings")
+    if isinstance(provider_settings, dict):
+        if provider_settings.get("computer_use_runtime") == "local":
+            provider_settings["computer_use_runtime"] = "none"
+            logger.warning(
+                "The local Computer Use runtime was removed: the runtime is now "
+                "none. Choose the sandbox runtime in Config -> AI -> "
+                "Capabilities -> Agent Computer Use to give the agent a computer."
+            )
+        provider_settings.pop("computer_use_local_permissions", None)
+    config["config_version"] = 6
     return True
 
 

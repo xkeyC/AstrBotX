@@ -91,8 +91,6 @@ Codex 自己的 shell 已关闭：执行工具由 AstrBot 提供，由“使用�
 - `exec_command` / `write_stdin`——Codex 模型训练时用的这一对工具，背后是 tmux PTY 会话，需要
   确认或打开 REPL 的命令会像人操作时一样运行。没跑完的会话会在后台轮询到结束，结果再发回聊天。
 - `apply_patch`——Codex 原生的补丁格式。
-- `local` 运行环境——命令和文件修改遵守角色的本地权限策略（文件范围、执行、网络；需要时用
-  bubblewrap / Seatbelt 隔离）。
 - `sandbox` 运行环境——所有 Agent 文件操作都在
   [Shipyard Neo](https://github.com/AstrBotDevs/astrbot-shipyard-neo) 沙盒内完成，包括 Skills，
   不会碰宿主机文件系统。

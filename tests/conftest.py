@@ -283,7 +283,7 @@ def main_agent_build_config():
         file_extract_enabled=False,
         context_limit_reached_strategy="truncate_by_turns",
         llm_safety_mode=True,
-        computer_use_runtime="local",
+        computer_use_runtime="none",
         add_cron_tools=True,
     )
 

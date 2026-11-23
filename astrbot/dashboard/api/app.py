@@ -113,7 +113,7 @@ def create_dashboard_asgi_app(
         dashboard_static_folder=static_folder,
     )
     app.state.services = SimpleNamespace(
-        config_profiles=ConfigProfileService(core_lifecycle, db, runtime=stats.runtime),
+        config_profiles=ConfigProfileService(core_lifecycle, db),
         config_display=ConfigDisplayService(core_lifecycle),
         config_files=ConfigFileService(core_lifecycle),
         config_routes=ConfigRoutingService(core_lifecycle),

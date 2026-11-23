@@ -13,31 +13,6 @@ from .agent_runner import (
     get_agent_runner_config_default,
 )
 
-
-def get_local_permission_defaults(system: str | None = None) -> dict:
-    """Return fresh Local permission defaults shared by all operating systems.
-
-    Args:
-        system: Retained for callers supplying an operating system name.
-
-    Returns:
-        Workspace files without execution for members and unrestricted local
-        execution for administrators. Neither policy requires process isolation.
-    """
-    return {
-        "member": {
-            "allow_execution": False,
-            "allow_network": False,
-            "filesystem_scope": "workspace",
-        },
-        "admin": {
-            "allow_execution": True,
-            "allow_network": True,
-            "filesystem_scope": "host",
-        },
-    }
-
-
 VERSION = __version__
 
 DB_PATH = os.path.join(get_astrbot_data_path(), "data_v4.db")
@@ -94,7 +69,7 @@ WEBHOOK_SUPPORTED_PLATFORMS = [
 
 # 默认配置
 DEFAULT_CONFIG = {
-    "config_version": 5,
+    "config_version": 6,
     "platform_settings": {
         "unique_session": False,
         "rate_limit": {
@@ -161,7 +136,6 @@ DEFAULT_CONFIG = {
             "add_cron_tools": True,
         },
         "computer_use_runtime": "none",
-        "computer_use_local_permissions": get_local_permission_defaults(),
         "computer_use_require_admin": True,
         "sandbox": {
             "booter": "shipyard_neo",
@@ -3610,46 +3584,12 @@ CONFIG_METADATA_3 = {
                     "provider_settings.computer_use_runtime": {
                         "description": "Computer Use Runtime",
                         "type": "string",
-                        "options": ["none", "local", "sandbox"],
+                        "options": ["none", "sandbox"],
                         "labels": [
                             "不允许任何环境",
-                            "本机环境",
                             "第三方沙箱环境",
                         ],
                         "hint": "选择 Computer Use 运行环境。第三方沙箱环境下所有 Agent 文件操作（包括 Skills）都在沙箱内完成，Codex 只做编排，不读写本机文件。",
-                    },
-                    "provider_settings.computer_use_local_permissions": {
-                        "description": "本地权限策略",
-                        "type": "object",
-                        "_special": "local_permission_matrix",
-                        "full_width": True,
-                        "items": {
-                            "member": {
-                                "type": "object",
-                                "items": {
-                                    "allow_execution": {"type": "bool"},
-                                    "allow_network": {"type": "bool"},
-                                    "filesystem_scope": {
-                                        "type": "string",
-                                        "options": ["none", "workspace", "host"],
-                                    },
-                                },
-                            },
-                            "admin": {
-                                "type": "object",
-                                "items": {
-                                    "allow_execution": {"type": "bool"},
-                                    "allow_network": {"type": "bool"},
-                                    "filesystem_scope": {
-                                        "type": "string",
-                                        "options": ["none", "workspace", "host"],
-                                    },
-                                },
-                            },
-                        },
-                        "condition": {
-                            "provider_settings.computer_use_runtime": "local",
-                        },
                     },
                     "provider_settings.computer_use_require_admin": {
                         "description": "沙箱能力需要 AstrBot 管理员权限",

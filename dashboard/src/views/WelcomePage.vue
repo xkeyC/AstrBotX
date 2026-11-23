@@ -202,7 +202,7 @@ import { MarkdownRender } from 'markstream-vue';
 import 'markstream-vue/index.css';
 
 type StepState = 'pending' | 'completed' | 'skipped';
-type ComputerAccessRuntime = 'local' | 'sandbox' | 'none';
+type ComputerAccessRuntime = 'sandbox' | 'none';
 
 const { tm } = useModuleI18n('features/welcome');
 const { locale } = useI18n();
@@ -339,7 +339,7 @@ async function fetchDefaultConfig() {
 
 function normalizeComputerAccessRuntime(runtime: unknown): ComputerAccessRuntime {
   // The runtime is the one execution switch: keep a sandbox choice as is.
-  return runtime === 'local' || runtime === 'sandbox' ? runtime : 'none';
+  return runtime === 'sandbox' ? 'sandbox' : 'none';
 }
 
 function syncComputerAccessRuntime(configData: any) {
@@ -350,13 +350,12 @@ function syncComputerAccessRuntime(configData: any) {
   computerAccessRuntime.value = normalizedRuntime;
   savedComputerAccessRuntime.value = normalizedRuntime;
   computerAccessStepState.value =
-    currentRuntime === 'local' || currentRuntime === 'none' || currentRuntime === 'sandbox'
+    currentRuntime === 'none' || currentRuntime === 'sandbox'
       ? 'completed'
       : 'pending';
 }
 
 const computerAccessOptions = computed(() => [
-  { title: tm('onboard.step3Allow'), value: 'local' },
   { title: tm('onboard.step3Sandbox'), value: 'sandbox' },
   { title: tm('onboard.step3Deny'), value: 'none' }
 ]);

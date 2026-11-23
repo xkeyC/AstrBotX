@@ -17,7 +17,6 @@ from astrbot.core.provider.func_tool_manager import (
     FunctionToolManager,
     _PermissionGuardedTool,
 )
-from astrbot.core.tools.computer_tools.shell import ShellSessionTool
 from astrbot.core.utils.active_event_registry import ActiveEventRegistry
 
 
@@ -47,41 +46,6 @@ def _build_run_context(message_components: list[object] | None = None):
     return ContextWrapper(context=ctx)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["poll", "write", "write_line", "interrupt"])
-@pytest.mark.parametrize(
-    ("yield_time_ms", "configured_timeout", "expected_timeout"),
-    [(300_000, 120, 305), (5_000, 120, 120), (300_000, 600, 600)],
-)
-async def test_shell_session_wait_fits_inside_tool_timeout(
-    monkeypatch, action, yield_time_ms, configured_timeout, expected_timeout
-):
-    from astrbot.core import astr_agent_tool_exec as tool_exec
-
-    tool = ShellSessionTool()
-    monkeypatch.setattr(tool, "call", AsyncMock(return_value="output"))
-    run_context = _build_run_context()
-    run_context.tool_call_timeout = configured_timeout
-    wait_for = AsyncMock(wraps=asyncio.wait_for)
-    monkeypatch.setattr(tool_exec.asyncio, "wait_for", wait_for)
-
-    results = [
-        result
-        async for result in FunctionToolExecutor._execute_local(
-            tool,
-            run_context,
-            action=action,
-            session_id="sh_test",
-            yield_time_ms=yield_time_ms,
-        )
-    ]
-
-    assert results[0].content[0].text == "output"
-    assert all(
-        call.kwargs["timeout"] == expected_timeout for call in wait_for.await_args_list
-    )
-
-
 class _DoneRunner:
     async def step_until_done(self, _max_step):
         for item in ():
@@ -91,7 +55,7 @@ class _DoneRunner:
         return SimpleNamespace(role="assistant", completion_text="done")
 
 
-@pytest.mark.parametrize("runtime", ["none", "local", "sandbox", None])
+@pytest.mark.parametrize("runtime", ["none", "sandbox", None])
 def test_build_handoff_toolset_keeps_permission_guards_for_default_tools(runtime):
     mgr = FunctionToolManager()
     plugin_tool = FunctionTool(
@@ -118,7 +82,7 @@ def test_build_handoff_toolset_keeps_permission_guards_for_default_tools(runtime
     assert toolset.get_tool("astrbot_execute_python") is None
     assert toolset.get_tool("astrbot_execute_ipython") is None
     assert (toolset.get_tool("astrbot_execute_shell") is not None) == (
-        runtime in {"local", "sandbox"}
+        runtime == "sandbox"
     )
 
 

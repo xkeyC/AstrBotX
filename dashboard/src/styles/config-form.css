@@ -52,7 +52,7 @@
   padding: 0;
 }
 
-.config-form :deep(.config-input > :not(.config-field--full-width)) {
+.config-form :deep(.config-input > *) {
   width: 100%;
   max-width: 270px;
 }
@@ -97,7 +97,7 @@
     padding-top: 10px;
   }
 
-  .config-form :deep(.config-input > :not(.config-field--full-width)) {
+  .config-form :deep(.config-input > *) {
     max-width: none;
   }
 }

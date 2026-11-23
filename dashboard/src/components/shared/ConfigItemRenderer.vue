@@ -1,5 +1,5 @@
 <template>
-  <div class="w-100" :class="{ 'config-field--full-width': itemMeta?.full_width }">
+  <div class="w-100">
     <!-- Special handling for specific metadata types -->
     <template v-if="itemMeta?._special === 'umo'">
       <UmoSelector
@@ -56,12 +56,6 @@
       <DashboardTotpManager
         :model-value="Boolean(modelValue)"
         :config-root="configRoot"
-        @update:model-value="emitUpdate"
-      />
-    </template>
-    <template v-else-if="itemMeta?._special === 'local_permission_matrix'">
-      <LocalPermissionMatrix
-        :model-value="modelValue"
         @update:model-value="emitUpdate"
       />
     </template>
@@ -279,7 +273,6 @@ import KnowledgeBaseSelector from './KnowledgeBaseSelector.vue'
 import PluginSetSelector from './PluginSetSelector.vue'
 import T2ITemplateEditor from './T2ITemplateEditor.vue'
 import DashboardTotpManager from './DashboardTotpManager.vue'
-import LocalPermissionMatrix from './LocalPermissionMatrix.vue'
 import { computed, ref } from 'vue'
 import { useI18n, useModuleI18n } from '@/i18n/composables'
 import { usePluginI18n } from '@/utils/pluginI18n'
@@ -328,7 +321,7 @@ const { t } = useI18n()
 const { getRaw } = useModuleI18n('features/config-metadata')
 const { configText } = usePluginI18n()
 
-async function emitUpdate(val) {
+function emitUpdate(val) {
   val = validateNumericConfig(props.itemMeta?.type, val)
   if (
     props.itemMeta?._special === 'agent_runner_type'
@@ -340,7 +333,6 @@ async function emitUpdate(val) {
     )
   }
   emit('update:modelValue', val)
-
 }
 
 const listSelectItems = computed(() =>

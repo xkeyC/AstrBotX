@@ -652,6 +652,8 @@ def test_shipyard_mode_becomes_the_sandbox_runtime(monkeypatch):
     )
 
     config = copy.deepcopy(DEFAULT_CONFIG)
+    # A config from before the local runtime was removed (config_version 6).
+    config["config_version"] = 5
     config["provider_settings"]["computer_use_runtime"] = "local"
     config["agent_runner"]["config"]["shipyard_mode"] = True
 
@@ -672,12 +674,15 @@ def test_shipyard_mode_off_is_just_dropped():
     from astrbot.core.utils.migra_helper import migrate_config_on_load
 
     config = copy.deepcopy(DEFAULT_CONFIG)
+    config["config_version"] = 5
     config["provider_settings"]["computer_use_runtime"] = "local"
     config["agent_runner"]["config"]["shipyard_mode"] = False
 
     assert migrate_config_on_load(config, Path("cmd_config.json"))
 
-    assert config["provider_settings"]["computer_use_runtime"] == "local"
+    # Shipyard mode off does not pick the sandbox; the removed local runtime
+    # becomes none.
+    assert config["provider_settings"]["computer_use_runtime"] == "none"
     assert "shipyard_mode" not in config["agent_runner"]["config"]
     assert "shipyard_mode" not in AGENT_RUNNER_CONFIG_DEFAULTS["codex"]
 

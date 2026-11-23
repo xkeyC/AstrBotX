@@ -966,10 +966,7 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
             The workspace-relative path, and where that is for the model.
         """
         from astrbot.core.computer.computer_client import get_booter
-        from astrbot.core.tools.computer_tools.util import (
-            workspace_root,
-            workspace_root_for_context,
-        )
+        from astrbot.core.tools.computer_tools.util import workspace_root
 
         relative = f"{GENERATED_IMAGE_DIR}/{os.path.basename(path)}"
         runtime = self._computer_runtime()
@@ -986,12 +983,7 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                 f"(`{SANDBOX_WORKSPACE}/{relative}`)"
             )
         else:
-            root = (
-                await workspace_root_for_context(self.run_context)  # type: ignore[arg-type]
-                if runtime == "local"
-                else workspace_root(self.umo)
-            )
-            target = root / relative
+            target = workspace_root(self.umo) / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             await asyncio.to_thread(shutil.copyfile, path, target)
             where = f"`{relative}` in your workspace"

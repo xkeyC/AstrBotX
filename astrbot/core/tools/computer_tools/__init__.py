@@ -13,7 +13,7 @@ from .fs import (
     FileWriteTool,
     GrepTool,
 )
-from .shell import ExecuteShellTool, LocalExecuteShellTool, ShellSessionTool
+from .shell import ExecuteShellTool
 from .shipyard_neo import (
     AnnotateExecutionTool,
     BrowserBatchExecTool,
@@ -55,11 +55,9 @@ __all__ = [
     "GrepTool",
     "ListSkillCandidatesTool",
     "ListSkillReleasesTool",
-    "LocalExecuteShellTool",
     "PromoteSkillCandidateTool",
     "RollbackSkillReleaseTool",
     "RunBrowserSkillTool",
-    "ShellSessionTool",
     "WriteStdinTool",
     "SyncSkillReleaseTool",
     "normalize_umo_for_workspace",

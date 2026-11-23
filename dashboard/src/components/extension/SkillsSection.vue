@@ -987,7 +987,7 @@ export default {
     const skills = ref([]);
     const skillSearch = ref("");
     const loading = ref(false);
-    const runtime = ref("local");
+    const runtime = ref("none");
     const sandboxCache = reactive({ ready: false, count: 0, updated_at: null });
     const uploading = ref(false);
     const uploadDialog = ref(false);
@@ -1144,13 +1144,13 @@ export default {
     const normalizeSkillsPayload = (res) => {
       const payload = res?.data?.data || [];
       if (Array.isArray(payload)) {
-        runtime.value = "local";
+        runtime.value = "none";
         sandboxCache.ready = false;
         sandboxCache.count = 0;
         sandboxCache.updated_at = null;
         return payload;
       }
-      runtime.value = payload.runtime || "local";
+      runtime.value = payload.runtime || "none";
       const cache = payload.sandbox_cache || {};
       sandboxCache.ready = !!cache.ready;
       sandboxCache.count = Number(cache.count || 0);

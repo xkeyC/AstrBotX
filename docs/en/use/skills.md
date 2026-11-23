@@ -74,9 +74,8 @@ Save it as `weekly-report/SKILL.md`, archive it as `weekly-report.zip`, and uplo
 
 Open `Config → AI → Capabilities → Agent Computer Use`, choose a runtime, and save:
 
-- **Local:** the Agent uses file tools in AstrBot's runtime environment. Members and administrators follow separate local permission policies. Reading instructions can use workspace file access without code execution. Running Skill scripts additionally requires execution permission and their dependencies.
 - **Sandbox:** the Agent reads files and runs scripts in a separate environment. Configure the sandbox connection first. AstrBot attempts to synchronize local and plugin Skills to active sandboxes.
-- **None:** a Skill inventory may still reach the model, but Computer Use file and execution tools are unavailable. Reading the full instructions is not guaranteed, and Skill scripts cannot run. Configure Local or Sandbox for practical Skill use.
+- **None:** a Skill inventory may still reach the model, but Computer Use file and execution tools are unavailable. Reading the full instructions is not guaranteed, and Skill scripts cannot run. Configure Sandbox for practical Skill use.
 
 See [Agent Sandbox](/en/use/astrbot-agent-sandbox) for file scopes, code execution, networking, and deployment. Skills do not bypass these restrictions or automatically grant regular members permission to execute code.
 
@@ -103,20 +102,17 @@ Plugin-provided Skills can be read but cannot be edited, downloaded, or deleted 
 
 ## Skill Sources and Priority
 
-AstrBot discovers Skills from these locations. Workspace Skills are available to the current request rather than the global management list:
+AstrBot discovers Skills from these locations:
 
 | Source | Location or discovery method | Management |
 | --- | --- | --- |
 | Local Skills | WebUI uploads or `data/skills/<skill_name>/SKILL.md` | Skills page |
 | Plugin-provided Skills | A plugin's `skills/` directory | Managed by the plugin; also subject to the current config profile's plugin selection |
 | Sandbox presets | Skills discovered inside the sandbox | Managed by the sandbox; start at least one sandbox session to populate discovery |
-| Workspace Skills | `skills/<skill_name>/SKILL.md` inside the current session workspace | Discovered per request in Local runtime; not shown in the global Skills list |
 
-A workspace path is usually `data/workspaces/<normalized_umo>/skills/<skill_name>/SKILL.md`. UMO identifies the session, and its directory name is normalized. Workspace Skills are not written to the global configuration or automatically synchronized to third-party sandboxes yet.
+For duplicate names, request-time priority is **Local > Plugin > Sandbox-only**.
 
-For duplicate names, request-time priority is **Workspace > Local > Plugin > Sandbox-only**. A workspace override applies only to the current request.
-
-A persona's explicit Skill list filters local, plugin, and sandbox Skills, **but not workspace Skills**. Explicitly selecting no Skills disables workspace Skills as well. When a local Skill has been synchronized to a sandbox, AstrBot treats it as the same Skill and uses its sandbox-readable path for sandbox requests.
+A persona's explicit Skill list filters local, plugin, and sandbox Skills. When a local Skill has been synchronized to a sandbox, AstrBot treats it as the same Skill and uses its sandbox-readable path for sandbox requests.
 
 ### Shipyard Neo Skills
 

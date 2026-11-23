@@ -1,6 +1,4 @@
 import asyncio
-import tempfile
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +15,7 @@ from astrbot.core.tools.computer_tools.codex_exec import (
 )
 
 
-def _context(monkeypatch, booter, *, local: bool, role: str = "admin"):
+def _context(monkeypatch, booter, *, role: str = "admin"):
     event = SimpleNamespace(
         unified_msg_origin="qq:FriendMessage:1",
         get_sender_id=lambda: "1",
@@ -30,104 +28,31 @@ def _context(monkeypatch, booter, *, local: bool, role: str = "admin"):
         return booter
 
     monkeypatch.setattr(codex_exec, "get_booter", fake_get_booter)
-    monkeypatch.setattr(
-        codex_exec, "check_local_execution_permission", lambda *_: (None, None)
-    )
-    monkeypatch.setattr(codex_exec, "is_local_runtime", lambda _: local)
-
-    async def fake_workspace_root(_context):
-        return Path(tempfile.gettempdir())
-
-    monkeypatch.setattr(codex_exec, "workspace_root_for_context", fake_workspace_root)
+    monkeypatch.setattr(codex_exec, "check_admin_permission", lambda *_: None)
     return ctx
 
 
-def _policy_context(role: str, policy: dict, admins: list[str]):
-    """A Local-runtime tool context whose role policy is ``policy``."""
-    config = {
-        "admins_id": admins,
-        "provider_settings": {
-            "computer_use_runtime": "local",
-            "computer_use_local_permissions": {role: policy},
-        },
-    }
-    event = SimpleNamespace(
-        unified_msg_origin="qq:GroupMessage:g",
-        get_sender_id=lambda: "1",
-        get_group_id=lambda: "g",
-        role=role,
-    )
-    return SimpleNamespace(
-        context=SimpleNamespace(
-            event=event, context=SimpleNamespace(get_config=lambda umo: config)
-        )
-    )
+class FakeSandboxShell:
+    """Minimal stand-in for the Shipyard Neo one-shot shell capability.
 
+    ``has_tmux`` decides whether the image looks like it has tmux, which is
+    what the session start script probes for.
+    """
 
-class RecordingShell(codex_exec.LocalShellComponent):
-    def __init__(self):
-        super().__init__()
-        self.calls = []
+    def __init__(self, polls, has_tmux=True):
+        self.polls = list(polls)
+        self.has_tmux = has_tmux
+        self.scripts = []
 
-    async def exec_managed(self, command, **kwargs):
-        self.calls.append(kwargs)
-        return {"session_id": "s-1", "stdout": "ok", "exit_code": 0}
-
-
-def _patch_local(monkeypatch, shell, tmp_path):
-    from astrbot.core.tools.computer_tools import util
-
-    # Isolation is available (Linux bubblewrap), whatever the test host has.
-    monkeypatch.setattr(
-        util, "get_process_sandbox_status", lambda: {"status": "detected"}
-    )
-
-    async def fake_get_booter(_context, _umo):
-        return SimpleNamespace(shell=shell)
-
-    async def fake_workspace_root(_context):
-        return tmp_path
-
-    monkeypatch.setattr(codex_exec, "get_booter", fake_get_booter)
-    monkeypatch.setattr(codex_exec, "workspace_root_for_context", fake_workspace_root)
-
-
-def test_local_exec_follows_the_roles_local_policy(monkeypatch, tmp_path):
-    shell = RecordingShell()
-    _patch_local(monkeypatch, shell, tmp_path)
-
-    # A member whose role may not execute is refused before anything starts.
-    ctx = _policy_context(
-        "member",
-        {
-            "allow_execution": False,
-            "allow_network": False,
-            "filesystem_scope": "workspace",
-        },
-        admins=[],
-    )
-    out = asyncio.run(ExecCommandTool().call(ctx, "ls"))
-    assert "Permission denied" in out and not shell.calls
-    out = asyncio.run(WriteStdinTool().call(ctx, "s-1", chars="y"))
-    assert "Permission denied" in out
-
-    # An admin with host access runs unisolated, with the policy's network,
-    # and the run stays allowed while the policy and admin status hold.
-    ctx = _policy_context(
-        "admin",
-        {"allow_execution": True, "allow_network": True, "filesystem_scope": "host"},
-        admins=["1"],
-    )
-    out = asyncio.run(ExecCommandTool().call(ctx, "ls"))
-    assert "Process exited with code 0" in out
-    call = shell.calls[-1]
-    assert call["sandboxed"] is False
-    assert call["allow_network"] is True
-    assert call["filesystem_scope"] == "host"
-    assert call["cwd"] == str(tmp_path)
-    assert call["permission_check"]() is True
-    ctx.context.context.get_config(umo="")["admins_id"] = []
-    assert call["permission_check"]() is False
+    async def exec(self, command, *, timeout=30, **_kwargs):
+        self.scripts.append(command)
+        if "out.log" in command and "tail -c" in command:
+            return SimpleNamespace(
+                output=self.polls.pop(0), error=None, model_dump=None
+            )
+        if "tmux new-session" in command:
+            return {"output": "tmux-ok" if self.has_tmux else "", "error": ""}
+        return {"output": "", "error": None}
 
 
 def test_response_format_matches_codex_shape():
@@ -157,74 +82,6 @@ def test_long_output_is_truncated_in_the_middle():
     assert "omitted middle of output" in text
 
 
-def test_local_runtime_reports_session_while_running(monkeypatch):
-    calls = {}
-
-    class Shell(codex_exec.LocalShellComponent):
-        async def exec_managed(self, command, **kwargs):
-            calls["command"] = command
-            calls["yield_time_ms"] = kwargs["yield_time_ms"]
-            return {
-                "session_id": "s-1",
-                "stdout": "building...",
-                "exit_code": None,
-            }
-
-        async def poll_session(self, **kwargs):
-            calls["poll"] = kwargs
-            return {"session_id": "s-1", "stdout": "done", "exit_code": 0}
-
-        async def write_session(self, **kwargs):
-            calls["write"] = kwargs["chars"]
-            return {"status": "running"}
-
-    booter = SimpleNamespace(shell=Shell())
-    ctx = _context(monkeypatch, booter, local=True)
-
-    out = asyncio.run(ExecCommandTool().call(ctx, "make", workdir="/w"))
-    assert calls["command"] == "make" and calls["yield_time_ms"] == 10_000
-    assert "Process running with session ID s-1" in out
-    assert out.endswith("building...")
-
-    out = asyncio.run(WriteStdinTool().call(ctx, "s-1", chars="y\n"))
-    assert calls["write"] == "y\n"
-    assert "Process exited with code 0" in out
-
-
-def test_local_runtime_surfaces_blocked_commands(monkeypatch):
-    class Shell(codex_exec.LocalShellComponent):
-        async def exec_managed(self, command, **kwargs):
-            raise PermissionError("Blocked unsafe shell command.")
-
-    ctx = _context(monkeypatch, SimpleNamespace(shell=Shell()), local=True)
-    assert "Blocked unsafe shell command." in asyncio.run(
-        ExecCommandTool().call(ctx, "rm -rf /")
-    )
-
-
-class FakeSandboxShell:
-    """Minimal stand-in for the Shipyard Neo one-shot shell capability.
-
-    ``has_tmux`` decides whether the image looks like it has tmux, which is
-    what the session start script probes for.
-    """
-
-    def __init__(self, polls, has_tmux=True):
-        self.polls = list(polls)
-        self.has_tmux = has_tmux
-        self.scripts = []
-
-    async def exec(self, command, *, timeout=30, **_kwargs):
-        self.scripts.append(command)
-        if "out.log" in command and "tail -c" in command:
-            return SimpleNamespace(
-                output=self.polls.pop(0), error=None, model_dump=None
-            )
-        if "tmux new-session" in command:
-            return {"output": "tmux-ok" if self.has_tmux else "", "error": ""}
-        return {"output": "", "error": None}
-
-
 def test_sandbox_session_lifecycle(monkeypatch):
     marker = codex_exec.META_MARKER
     shell = FakeSandboxShell(
@@ -233,7 +90,7 @@ def test_sandbox_session_lifecycle(monkeypatch):
             f"got it\n{marker} 25 0>>>\n",
         ]
     )
-    ctx = _context(monkeypatch, SimpleNamespace(shell=shell), local=False)
+    ctx = _context(monkeypatch, SimpleNamespace(shell=shell))
 
     out = asyncio.run(ExecCommandTool().call(ctx, "python repl.py", workdir="/w"))
     assert "Process running with session ID" in out
@@ -308,17 +165,16 @@ def test_the_sandbox_runtime_keeps_skills_in_the_sandbox_and_native_exec_off(
     assert config.provider_settings["_codex_skills"] == "sandbox"
     assert config.provider_settings["computer_use_runtime"] == "sandbox"
 
-    for runtime in ("none", "local"):
-        plain = _build_config(
-            {"provider_settings": {"computer_use_runtime": runtime}},
-            # A leftover shipyard_mode key no longer means anything: the
-            # runtime is the one switch.
-            {"shipyard_mode": True},
-            plugin_context,
-        )
-        assert plain.computer_use_runtime == runtime
-        assert plain.provider_settings["_codex_skills"] is True
-        assert plain.provider_settings["computer_use_runtime"] == "local"
+    plain = _build_config(
+        {"provider_settings": {"computer_use_runtime": "none"}},
+        # A leftover shipyard_mode key no longer means anything: the
+        # runtime is the one switch.
+        {"shipyard_mode": True},
+        plugin_context,
+    )
+    assert plain.computer_use_runtime == "none"
+    assert plain.provider_settings["_codex_skills"] is True
+    assert plain.provider_settings["computer_use_runtime"] == "none"
 
     opts = engine_options(
         {
@@ -341,7 +197,7 @@ def test_the_sandbox_runtime_keeps_skills_in_the_sandbox_and_native_exec_off(
 def test_sandbox_falls_back_to_a_fifo_without_tmux(monkeypatch):
     marker = codex_exec.META_MARKER
     shell = FakeSandboxShell([f"ready\n{marker} 6 none>>>\n"], has_tmux=False)
-    ctx = _context(monkeypatch, SimpleNamespace(shell=shell), local=False)
+    ctx = _context(monkeypatch, SimpleNamespace(shell=shell))
 
     out = asyncio.run(ExecCommandTool().call(ctx, "top", workdir="/w"))
     session_id = out.split("session ID ")[1].splitlines()[0]
@@ -390,7 +246,7 @@ def test_write_stdin_script_shapes():
 def test_sandbox_start_script_guards_the_pane(monkeypatch):
     marker = codex_exec.META_MARKER
     shell = FakeSandboxShell([f"ok\n{marker} 3 none>>>\n"])
-    ctx = _context(monkeypatch, SimpleNamespace(shell=shell), local=False)
+    ctx = _context(monkeypatch, SimpleNamespace(shell=shell))
 
     asyncio.run(ExecCommandTool().call(ctx, "echo semi;", workdir="/w"))
     start = shell.scripts[0]
@@ -433,51 +289,3 @@ def test_pty_control_sequences_are_stripped_for_the_model():
     )
     assert text.endswith("Output:\ndone\n")
     assert "\x1b" not in text and "\r" not in text
-
-
-@pytest.mark.parametrize("workdir", ["/", "..", "../outside", str(Path.home())])
-def test_a_workspace_scoped_run_cannot_leave_the_workspace(
-    monkeypatch, tmp_path, workdir
-):
-    shell = RecordingShell()
-    _patch_local(monkeypatch, shell, tmp_path / "ws")
-    (tmp_path / "ws").mkdir()
-    ctx = _policy_context(
-        "member",
-        {
-            "allow_execution": True,
-            "allow_network": False,
-            "filesystem_scope": "workspace",
-        },
-        admins=[],
-    )
-    out = asyncio.run(ExecCommandTool().call(ctx, "ls", workdir=workdir))
-    assert out.startswith("Error: workdir must be inside the workspace")
-    assert not shell.calls
-
-
-def test_a_relative_workdir_is_in_the_workspace(monkeypatch, tmp_path):
-    shell = RecordingShell()
-    ws = tmp_path / "ws"
-    (ws / "src").mkdir(parents=True)
-    _patch_local(monkeypatch, shell, ws)
-    ctx = _policy_context(
-        "member",
-        {
-            "allow_execution": True,
-            "allow_network": False,
-            "filesystem_scope": "workspace",
-        },
-        admins=[],
-    )
-    asyncio.run(ExecCommandTool().call(ctx, "ls", workdir="src"))
-    assert shell.calls[-1]["cwd"] == str((ws / "src").resolve())
-
-    # Host access may run anywhere.
-    ctx = _policy_context(
-        "admin",
-        {"allow_execution": True, "allow_network": True, "filesystem_scope": "host"},
-        admins=["1"],
-    )
-    asyncio.run(ExecCommandTool().call(ctx, "ls", workdir=str(tmp_path)))
-    assert shell.calls[-1]["cwd"] == str(tmp_path.resolve())

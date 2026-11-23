@@ -59,7 +59,6 @@ shipyard-neo-sdk>=0.2.0
 packaging>=24.2
 qrcode>=8.2
 quart>=0.20.0
-python-ripgrep==0.0.8 ; python_version < '3.14'
 python-docx>=1.2.0
 pyotp>=2.9.0
 reportlab>=5.0.0

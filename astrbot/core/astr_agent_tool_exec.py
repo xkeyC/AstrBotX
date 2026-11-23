@@ -42,8 +42,6 @@ from astrbot.core.tools.computer_tools import (
     FileUploadTool,
     FileWriteTool,
     GrepTool,
-    LocalExecuteShellTool,
-    ShellSessionTool,
 )
 from astrbot.core.tools.message_tools import SendMessageToUserTool
 from astrbot.core.utils.active_event_registry import active_event_registry
@@ -239,21 +237,6 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                     }
                 )
             return tools
-        if runtime == "local":
-            shell_tool = LocalExecuteShellTool()
-            shell_session_tool = tool_mgr.get_builtin_tool(ShellSessionTool)
-            read_tool = tool_mgr.get_builtin_tool(FileReadTool)
-            write_tool = tool_mgr.get_builtin_tool(FileWriteTool)
-            edit_tool = tool_mgr.get_builtin_tool(FileEditTool)
-            grep_tool = tool_mgr.get_builtin_tool(GrepTool)
-            return {
-                shell_tool.name: shell_tool,
-                shell_session_tool.name: shell_session_tool,
-                read_tool.name: read_tool,
-                write_tool.name: write_tool,
-                edit_tool.name: edit_tool,
-                grep_tool.name: grep_tool,
-            }
         return {}
 
     @classmethod
@@ -721,17 +704,6 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
             raise ValueError("Tool must have a valid handler or override 'run' method.")
 
         effective_timeout = tool_call_timeout or run_context.tool_call_timeout
-        if isinstance(tool, ShellSessionTool) and tool_args.get("action") in {
-            "poll",
-            "write",
-            "write_line",
-            "interrupt",
-        }:
-            yield_time_ms = tool_args.get("yield_time_ms", 5_000)
-            if isinstance(yield_time_ms, int) and 0 <= yield_time_ms <= 300_000:
-                # Allow the requested wait plus time to write input and collect output.
-                effective_timeout = max(effective_timeout, yield_time_ms / 1000 + 5)
-
         wrapper = call_local_llm_tool(
             context=run_context,
             handler=awaitable,

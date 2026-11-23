@@ -22,10 +22,8 @@ from astrbot.core.platform.message_type import MessageType
 from astrbot.core.tools.computer_tools.fs import _remote_basename
 from astrbot.core.tools.computer_tools.util import (
     check_admin_permission,
-    is_local_runtime,
     reject_secret_path,
     workspace_root,
-    workspace_root_for_context,
 )
 from astrbot.core.tools.registry import builtin_tool
 from astrbot.core.utils.astrbot_path import (
@@ -35,13 +33,10 @@ from astrbot.core.utils.astrbot_path import (
 from astrbot.core.utils.model_markup import strip_model_markup
 
 
-def _file_send_allowed_roots(
-    umo: str | None,
-    current_workspace_root: Path | None = None,
-) -> tuple[Path, ...]:
+def _file_send_allowed_roots(umo: str | None) -> tuple[Path, ...]:
     roots = []
     if umo:
-        roots.append(current_workspace_root or workspace_root(umo))
+        roots.append(workspace_root(umo))
     roots.extend(
         [
             Path(get_astrbot_temp_path()).resolve(strict=False),
@@ -58,7 +53,6 @@ def _is_path_within(path: Path, roots: tuple[Path, ...]) -> bool:
 def _can_send_local_file(
     context: ContextWrapper[AstrAgentContext],
     local_path: Path,
-    current_workspace_root: Path | None = None,
 ) -> bool:
     """Decide whether a host path may be put into a chat message.
 
@@ -71,16 +65,13 @@ def _can_send_local_file(
     Args:
         context: Current tool call context.
         local_path: Resolved host path the model asked to send.
-        current_workspace_root: Session workspace root, when already resolved.
 
     Returns:
         Whether the file may be sent.
     """
     if reject_secret_path(local_path):
         return False
-    allowed_roots = _file_send_allowed_roots(
-        context.context.event.unified_msg_origin, current_workspace_root
-    )
+    allowed_roots = _file_send_allowed_roots(context.context.event.unified_msg_origin)
     return _is_path_within(local_path, allowed_roots)
 
 
@@ -154,17 +145,11 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
         if not path:
             raise FileNotFoundError(f"{component_type} path is empty")
 
-        current_workspace_root = (
-            await workspace_root_for_context(context)
-            if is_local_runtime(context)
-            else None
-        )
-
         # Relative host paths are resolved only inside the user's workspace.
         if not os.path.isabs(path):
             unified_msg_origin = context.context.event.unified_msg_origin
             if unified_msg_origin:
-                ws_path = current_workspace_root or workspace_root(unified_msg_origin)
+                ws_path = workspace_root(unified_msg_origin)
                 try:
                     ws_candidate = (ws_path / path).resolve(strict=False)
                     if ws_candidate.is_file() and ws_candidate.is_relative_to(ws_path):
@@ -173,30 +158,10 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
                     pass
         else:
             local_candidate = Path(path).expanduser().resolve(strict=False)
-            if local_candidate.is_file():
-                if _can_send_local_file(
-                    context, local_candidate, current_workspace_root
-                ):
-                    return str(local_candidate), False
-                if is_local_runtime(context):
-                    allowed = ", ".join(
-                        str(root)
-                        for root in _file_send_allowed_roots(
-                            context.context.event.unified_msg_origin,
-                            current_workspace_root,
-                        )
-                    )
-                    raise PermissionError(
-                        "Local file send is restricted for this user. "
-                        f"Allowed directories: {allowed}. "
-                        f"Blocked path: {local_candidate}."
-                    )
-
-        # Local runtime has no separate sandbox: the workspace and local-file
-        # branches above already enforced the caller's permissions, so probing
-        # the host shell here would bypass them and expose host paths.
-        if is_local_runtime(context):
-            raise FileNotFoundError(f"{component_type} path does not exist: {path}")
+            if local_candidate.is_file() and _can_send_local_file(
+                context, local_candidate
+            ):
+                return str(local_candidate), False
 
         try:
             sb = await get_booter(

@@ -5,7 +5,6 @@ import copy
 import json
 import os
 import threading
-from pathlib import Path
 
 import pytest
 
@@ -13,9 +12,9 @@ from astrbot.core.config.astrbot_config import AstrBotConfig, RateLimitStrategy
 from astrbot.core.config.default import (
     DEFAULT_CONFIG,
     DEFAULT_VALUE_MAP,
-    get_local_permission_defaults,
 )
 from astrbot.core.config.i18n_utils import ConfigMetadataI18n
+from astrbot.core.utils import migra_helper
 from astrbot.core.utils.auth_password import (
     DEFAULT_DASHBOARD_PASSWORD,
     hash_dashboard_password,
@@ -97,193 +96,59 @@ class TestAstrBotConfigLoad:
         assert config.platform_settings["unique_session"] is True
         assert config.provider_settings["enable"] is False
 
-    @pytest.mark.parametrize("require_admin", [True, False])
-    @pytest.mark.parametrize("system", ["Windows", "Linux", "Darwin"])
-    def test_migrates_legacy_local_computer_permissions(
-        self,
-        temp_config_path,
-        require_admin,
-        system,
-    ):
-        """Legacy admin switches should become explicit Local role policies."""
-        default_config = {
-            "provider_settings": {
-                "computer_use_require_admin": True,
-                "computer_use_local_permissions": get_local_permission_defaults(system),
-            }
-        }
-        with open(temp_config_path, "w", encoding="utf-8-sig") as file:
-            json.dump(
-                {
-                    "provider_settings": {
-                        "computer_use_require_admin": require_admin,
-                    }
-                },
-                file,
-            )
-
-        config = AstrBotConfig(
-            config_path=temp_config_path,
-            default_config=default_config,
-        )
-
-        permissions = config["provider_settings"]["computer_use_local_permissions"]
-        assert permissions["member"] == {
-            "allow_execution": not require_admin,
-            "allow_network": False,
-            "filesystem_scope": "workspace",
-        }
-        assert permissions["admin"] == {
-            "allow_execution": True,
-            "allow_network": True,
-            "filesystem_scope": "host",
-        }
-        assert (
-            json.loads(Path(temp_config_path).read_text(encoding="utf-8-sig"))[
-                "provider_settings"
-            ]["computer_use_local_permissions"]
-            == permissions
-        )
-
-    @pytest.mark.parametrize("system", ["Windows", "Linux", "Darwin"])
-    @pytest.mark.parametrize("scope", [None, "none", "workspace", "host"])
-    def test_local_defaults_preserve_existing_policies(
-        self, temp_config_path, system, scope
-    ):
-        defaults = get_local_permission_defaults(system)
-        existing = {"member": {"filesystem_scope": scope}} if scope else {}
-        if scope:
-            Path(temp_config_path).write_text(
-                json.dumps(
-                    {"provider_settings": {"computer_use_local_permissions": existing}}
-                )
-            )
-        config = AstrBotConfig(
-            temp_config_path,
-            default_config={
-                "provider_settings": {"computer_use_local_permissions": defaults}
-            },
-        )
-        expected = {
-            role: {**policy, **existing.get(role, {})}
-            for role, policy in defaults.items()
-        }
-        assert config["provider_settings"]["computer_use_local_permissions"] == expected
-        assert (
-            json.loads(Path(temp_config_path).read_text(encoding="utf-8-sig"))[
-                "provider_settings"
-            ]["computer_use_local_permissions"]
-            == expected
-        )
-        assert defaults == get_local_permission_defaults(system)
-
-    @pytest.mark.parametrize("system", ["Windows", "Linux", "Darwin"])
-    @pytest.mark.parametrize("config_version", [4, 5, 6])
+    @pytest.mark.parametrize("runtime", ["local", "none", "sandbox"])
+    @pytest.mark.parametrize("config_version", [4, 5])
     @pytest.mark.parametrize("is_profile", [False, True])
-    def test_windows_member_workspace_upgrade_is_persisted_once(
-        self, tmp_path, monkeypatch, system, config_version, is_profile
+    def test_local_runtime_removal_migration(
+        self, tmp_path, runtime, config_version, is_profile
     ):
-        """Migrate the old Windows default once in global and profile configs."""
+        """A saved local runtime loads as none and its permissions are dropped."""
         profile_root = tmp_path / "profiles"
         profile_root.mkdir()
-        monkeypatch.setattr(
-            "astrbot.core.utils.migra_helper.get_astrbot_config_path",
-            lambda: str(profile_root),
-            # The fork's migrations read no profiles.
-            raising=False,
+        config_path = (
+            profile_root / "custom.json" if is_profile else tmp_path / "cmd_config.json"
         )
-        monkeypatch.setattr(
-            "astrbot.core.utils.migra_helper.get_astrbot_data_path",
-            lambda: str(tmp_path),
-            # The fork's migrations read no profiles.
-            raising=False,
-        )
-        monkeypatch.setattr(
-            "astrbot.core.utils.migra_helper.platform.system", lambda: system
-        )
-        default_path = tmp_path / "cmd_config.json"
-        default_path.write_text(json.dumps(DEFAULT_CONFIG), encoding="utf-8")
-        config_path = profile_root / "custom.json" if is_profile else default_path
         config = copy.deepcopy(DEFAULT_CONFIG)
         config["config_version"] = config_version
-        permissions = config["provider_settings"]["computer_use_local_permissions"]
-        disabled = {
-            "allow_execution": False,
-            "allow_network": False,
-            "filesystem_scope": "none",
-        }
-        permissions["member"] = disabled.copy()
-        permissions["admin"] = disabled.copy()
-        config_path.write_text(json.dumps(config), encoding="utf-8")
-
-        loaded = AstrBotConfig(config_path=str(config_path))
-
-        expected = {
-            **disabled,
-            "filesystem_scope": (
-                "workspace" if system == "Windows" and config_version < 5 else "none"
-            ),
-        }
-        persisted = json.loads(config_path.read_text(encoding="utf-8-sig"))
-        assert persisted["config_version"] == max(config_version, 5)
-        assert persisted["provider_settings"]["computer_use_local_permissions"] == {
-            "member": expected,
-            "admin": disabled,
-        }
-
-        loaded["provider_settings"]["computer_use_local_permissions"]["member"] = (
-            disabled.copy()
-        )
-        loaded.save_config()
-        reloaded = AstrBotConfig(config_path=str(config_path))
-        assert reloaded["provider_settings"]["computer_use_local_permissions"] == {
-            "member": disabled,
-            "admin": disabled,
-        }
-
-    @pytest.mark.parametrize(
-        "member",
-        [
-            {
-                "allow_execution": False,
-                "allow_network": False,
-                "filesystem_scope": "workspace",
-            },
-            {
-                "allow_execution": False,
-                "allow_network": False,
-                "filesystem_scope": "host",
-            },
-            {
-                "allow_execution": True,
-                "allow_network": False,
-                "filesystem_scope": "workspace",
-            },
-            {
+        config["provider_settings"]["computer_use_runtime"] = runtime
+        config["provider_settings"]["computer_use_local_permissions"] = {
+            "member": {
                 "allow_execution": True,
                 "allow_network": True,
                 "filesystem_scope": "host",
             },
-        ],
-    )
-    def test_windows_workspace_upgrade_preserves_other_member_policies(
-        self, tmp_path, monkeypatch, member
-    ):
-        """Keep customized Windows execution and file grants unchanged."""
-        monkeypatch.setattr(
-            "astrbot.core.utils.migra_helper.platform.system", lambda: "Windows"
-        )
-        config_path = tmp_path / "custom.json"
-        config = copy.deepcopy(DEFAULT_CONFIG)
-        config["config_version"] = 4
-        config["provider_settings"]["computer_use_local_permissions"]["member"] = member
+        }
         config_path.write_text(json.dumps(config), encoding="utf-8")
 
         loaded = AstrBotConfig(config_path=str(config_path))
 
+        expected_runtime = "none" if runtime == "local" else runtime
+        persisted = json.loads(config_path.read_text(encoding="utf-8-sig"))
+        for conf in (loaded, persisted):
+            assert conf["config_version"] == 6
+            assert conf["provider_settings"]["computer_use_runtime"] == (
+                expected_runtime
+            )
+            assert "computer_use_local_permissions" not in conf["provider_settings"]
+
+    def test_local_runtime_removal_skips_current_version(self):
+        """A config already at version 6 is left alone by the step."""
+        config = {
+            "config_version": 6,
+            "provider_settings": {"computer_use_runtime": "local"},
+        }
+
+        assert migra_helper._migrate_local_runtime_removal(config) is False
+        assert config == {
+            "config_version": 6,
+            "provider_settings": {"computer_use_runtime": "local"},
+        }
+
+    def test_default_config_is_current_version(self):
+        """New configs start at the latest version, so no step runs on them."""
+        assert DEFAULT_CONFIG["config_version"] == 6
         assert (
-            loaded["provider_settings"]["computer_use_local_permissions"]["member"]
-            == member
+            "computer_use_local_permissions" not in DEFAULT_CONFIG["provider_settings"]
         )
 
     def test_first_deploy_flag(self, temp_config_path, minimal_default_config):

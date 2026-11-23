@@ -814,7 +814,6 @@ class PluginService:
         try:
             skills = SkillManager().list_skills(
                 active_only=False,
-                runtime="local",
                 show_sandbox_path=False,
             )
         except Exception as exc:

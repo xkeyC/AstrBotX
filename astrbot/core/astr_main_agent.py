@@ -5,7 +5,6 @@ import copy
 import datetime
 import json
 import os
-import platform
 import zoneinfo
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
@@ -30,7 +29,6 @@ from astrbot.core.astr_main_agent_resources import (
     TOOL_CALL_PROMPT_SEARCH_REGISTRY_MODE,
     TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
 )
-from astrbot.core.computer.booters.local import resolve_windows_shell
 from astrbot.core.conversation_mgr import Conversation
 from astrbot.core.db import BaseDatabase
 from astrbot.core.event_llm_overrides import get_event_selected_persona_id
@@ -74,16 +72,10 @@ from astrbot.core.tools.computer_tools import (
     GrepTool,
     ListSkillCandidatesTool,
     ListSkillReleasesTool,
-    LocalExecuteShellTool,
     PromoteSkillCandidateTool,
     RollbackSkillReleaseTool,
     RunBrowserSkillTool,
-    ShellSessionTool,
     SyncSkillReleaseTool,
-)
-from astrbot.core.tools.computer_tools.util import (
-    LOCAL_NETWORK_POLICY_NOTICE,
-    get_local_permission_policy,
 )
 from astrbot.core.tools.cron_tools import FutureTaskTool
 from astrbot.core.tools.knowledge_base_tools import (
@@ -193,7 +185,7 @@ class MainAgentBuildConfig:
     to prevent LLM output harmful information"""
     safety_mode_strategy: str = "system_prompt"
     computer_use_runtime: str = "none"
-    """The runtime for agent computer use: none, local, or sandbox."""
+    """The runtime for agent computer use: none or sandbox."""
     sandbox_cfg: dict = field(default_factory=dict)
     add_cron_tools: bool = True
     """This will add cron job management tools to the main agent for proactive cron job execution."""
@@ -559,64 +551,6 @@ async def _apply_workspace_extra_prompt(
     )
 
 
-def _apply_local_env_tools(
-    req: ProviderRequest,
-    plugin_context: Context,
-) -> None:
-    if req.func_tool is None:
-        req.func_tool = ToolSet()
-    tool_mgr = plugin_context.get_llm_tool_manager()
-    req.func_tool.add_tool(LocalExecuteShellTool())
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(ShellSessionTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileReadTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileWriteTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileEditTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(GrepTool))
-    req.set_context_anchor("local_runtime", _build_local_mode_prompt())
-
-
-def _build_local_mode_prompt(codex_tools: bool = False) -> str:
-    """The Local runtime note; ``codex_tools``: the shell tools are Codex's
-    ``exec_command`` / ``write_stdin`` instead of AstrBot's."""
-    system_name = platform.system() or "Unknown"
-    if system_name.lower() != "windows":
-        shell_hint = (
-            "The runtime shell is Unix-like. Use POSIX-compatible shell commands."
-        )
-    elif resolve_windows_shell() == "pwsh.exe":
-        shell_hint = (
-            "The runtime shell is PowerShell 7 (pwsh.exe). "
-            "Use PowerShell 7-compatible syntax and cmdlets, and do not "
-            "assume a full Unix userland or GNU utilities are available."
-        )
-    else:
-        shell_hint = (
-            "The runtime shell is Windows PowerShell 5.1 (powershell.exe). "
-            "Use Windows PowerShell 5.1-compatible syntax and cmdlets; do not use "
-            "PowerShell 7-only syntax or assume Unix commands like cat/ls/grep are available."
-        )
-    if codex_tools:
-        return (
-            "Local computer tools are available subject to your role's file and execution permissions. "
-            f"Current operating system: {system_name}. "
-            f"{shell_hint} "
-            "A command that outlives `exec_command`'s wait returns a session ID; use "
-            "`write_stdin` to poll it or write to it. Do not add `&`, `nohup`, or another "
-            "detachment wrapper for ordinary long-running commands."
-        )
-    return (
-        "Local computer tools are available subject to your role's file and execution permissions. "
-        f"Current operating system: {system_name}. "
-        f"{shell_hint} "
-        "Local shell commands automatically return a managed session when they "
-        "outlive the initial wait. Use `astrbot_shell_session` to list, poll, "
-        "write raw text or complete lines to, interrupt, or terminate those sessions. "
-        "Use its `write_line` action for line-oriented programs so the session receives "
-        "a real line feed. Do not add `&`, `nohup`, or another detachment wrapper for "
-        "ordinary long-running commands."
-    )
-
-
 def _filter_skills_for_current_config(
     skills: list[SkillInfo],
     cfg: dict,
@@ -730,26 +664,13 @@ async def _ensure_persona_and_skills(
         skills = _filter_skills_for_current_config(skills, cfg)
     except Exception:
         logger.exception("Failed to list skills while preparing LLM request.")
-    workspace_skills: list[SkillInfo] = []
-    if runtime == "local" and skill_manager:
-        workspace_root = await _get_workspace_path_for_umo(
-            event.unified_msg_origin,
-            plugin_context,
-        )
-        workspace_skills.extend(skill_manager.list_workspace_skills(workspace_root))
-
-    if skills or workspace_skills:
+    if skills:
         if persona and persona.get("skills") is not None:
             if not persona["skills"]:
                 skills = []
             else:
                 allowed = set(persona["skills"])
                 skills = [skill for skill in skills if skill.name in allowed]
-        if workspace_skills and (not persona or persona.get("skills") != []):
-            skills_by_name = {skill.name: skill for skill in skills}
-            for skill in workspace_skills:
-                skills_by_name[skill.name] = skill
-            skills = [skills_by_name[name] for name in sorted(skills_by_name)]
         if skills:
             skills = sorted(skills, key=lambda skill: (skill.name, skill.path))
             if cfg.get("_codex_skills"):
@@ -1923,27 +1844,12 @@ async def build_main_agent(
 
     if config.computer_use_runtime == "sandbox":
         _apply_sandbox_tools(config, req, req.session_id)
-    elif config.computer_use_runtime == "local":
-        _apply_local_env_tools(req, plugin_context)
 
     agent_runner = AgentRunner()
     astr_agent_ctx = AstrAgentContext(
         context=plugin_context,
         event=event,
     )
-    if config.computer_use_runtime == "local":
-        local_policy = get_local_permission_policy(
-            AgentContextWrapper(context=astr_agent_ctx)
-        )
-        if (
-            local_policy.allow_execution
-            and not local_policy.allow_network
-            and LOCAL_NETWORK_POLICY_NOTICE not in (req.system_prompt or "")
-        ):
-            req.system_prompt = (
-                f"{req.system_prompt or ''}\n{LOCAL_NETWORK_POLICY_NOTICE}\n"
-            )
-
     if config.add_cron_tools:
         _proactive_cron_job_tools(req, plugin_context)
 
@@ -2005,21 +1911,6 @@ async def build_main_agent(
             "skills_like": TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
             "search_registry": TOOL_CALL_PROMPT_SEARCH_REGISTRY_MODE,
         }.get(config.tool_schema_mode, TOOL_CALL_PROMPT)
-
-        if config.computer_use_runtime == "local":
-            workspace_root = await _get_workspace_path_for_umo(
-                event.unified_msg_origin,
-                plugin_context,
-            )
-            tool_prompt += (
-                f"\nCurrent workspace: `{workspace_root}`. "
-                "`astrbot_execute_shell` uses it as its working directory. "
-                "`astrbot_file_read_tool`, "
-                "`astrbot_file_write_tool`, `astrbot_file_edit_tool`, and "
-                "`astrbot_grep_tool` resolve relative paths from it. Prefer relative "
-                "paths within the workspace; do not assume this behavior for other "
-                "tools.\n"
-            )
 
         req.set_context_anchor("tool_runtime", tool_prompt)
 

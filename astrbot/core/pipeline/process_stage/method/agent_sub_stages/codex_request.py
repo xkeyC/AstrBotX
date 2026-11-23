@@ -19,9 +19,7 @@ from astrbot.core.astr_main_agent import (
     MainAgentBuildConfig,
     _apply_kb,
     _apply_llm_safety_mode,
-    _apply_local_env_tools,
     _apply_sandbox_tools,
-    _build_local_mode_prompt,
     _decorate_llm_request,
     _filter_tools_by_persona_scope,
     _get_quoted_message_parser_settings,
@@ -60,7 +58,6 @@ def _build_config(
     # Skills are read through astrbot_read_skill (not a shell): from the
     # sandbox copy with the sandbox runtime, from this host otherwise.
     settings["_codex_skills"] = "sandbox" if in_sandbox else True
-    settings["computer_use_runtime"] = "sandbox" if in_sandbox else "local"
     proactive_cfg = settings.get("proactive_capability", {}) or {}
     return MainAgentBuildConfig(
         tool_call_timeout=int(runner_config.get("tool_call_timeout") or 120),
@@ -69,8 +66,7 @@ def _build_config(
         llm_safety_mode=bool(runner_config.get("safety_mode", False)),
         add_cron_tools=proactive_cfg.get("add_cron_tools", True),
         timezone=plugin_context.get_config().get("timezone"),
-        # Execution environment as configured by the user (sandbox / local /
-        # none).
+        # Execution environment as configured by the user (sandbox / none).
         computer_use_runtime=runtime,
         sandbox_cfg=original.get("sandbox", {}) or {},
     )
@@ -186,13 +182,11 @@ async def prepare_codex_request(
 
     if config.llm_safety_mode:
         _apply_llm_safety_mode(config, req)
-    # AstrBot's execution tools (shipyard-neo sandbox or local host). They are
-    # deferred dynamic tools under code mode, so they cost no prompt tokens.
+    # AstrBot's execution tools in the sandbox. They are deferred dynamic
+    # tools under code mode, so they cost no prompt tokens.
     if config.computer_use_runtime == "sandbox":
         _apply_sandbox_tools(config, req, req.session_id or event.unified_msg_origin)
-    elif config.computer_use_runtime == "local":
-        _apply_local_env_tools(req, plugin_context)
-    if config.computer_use_runtime in ("sandbox", "local") and req.func_tool:
+    if config.computer_use_runtime == "sandbox" and req.func_tool:
         from astrbot.core.tools.computer_tools.apply_patch import ApplyPatchTool
         from astrbot.core.tools.computer_tools.codex_exec import (
             ExecCommandTool,
@@ -204,19 +198,14 @@ async def prepare_codex_request(
         # one-shot shell tools here.
         req.func_tool.add_tool(ApplyPatchTool())
         req.func_tool.remove_tool("astrbot_execute_shell")
-        req.func_tool.remove_tool("astrbot_shell_session")
         req.func_tool.add_tool(ExecCommandTool())
         req.func_tool.add_tool(WriteStdinTool())
-        if config.computer_use_runtime == "local":
-            req.set_context_anchor(
-                "local_runtime", _build_local_mode_prompt(codex_tools=True)
-            )
         # A persona that lists the shell or edit tools keeps them under their
         # Codex names, so its tool list means the same with either runner.
         allowed = event.get_extra(PERSONA_ALLOWED_TOOLS_EXTRA_KEY)
         if allowed is not None:
             allowed = set(allowed)
-            if allowed & {"astrbot_execute_shell", "astrbot_shell_session"}:
+            if "astrbot_execute_shell" in allowed:
                 allowed |= {"exec_command", "write_stdin"}
             if allowed & {"astrbot_file_edit_tool", "astrbot_file_write_tool"}:
                 allowed.add("apply_patch")

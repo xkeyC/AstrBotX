@@ -110,15 +110,12 @@
     },
     "agent_computer_use": {
       "description": "使用电脑能力",
-      "hint": "让 AstrBot 访问和使用本机环境或者隔离的沙盒环境，以执行更复杂的任务。详见: [Agent 沙盒环境](https://docs.astrbot.app/use/astrbot-agent-sandbox.html)。",
+      "hint": "让 Agent 使用隔离的第三方沙箱环境，以执行更复杂的任务。详见: [Agent 沙盒环境](https://docs.astrbot.app/use/astrbot-agent-sandbox.html)。",
       "provider_settings": {
         "computer_use_runtime": {
           "description": "运行环境",
           "hint": "允许 Agent 访问的环境。选择第三方沙箱环境时，所有 Agent 文件操作（包括 Skills）都在 Shipyard Neo 沙箱内完成，Codex 只做编排，不读写本机文件。",
-          "labels": ["不允许任何环境", "本机环境", "第三方沙箱环境"]
-        },
-        "computer_use_local_permissions": {
-          "description": "本地权限策略"
+          "labels": ["不允许任何环境", "第三方沙箱环境"]
         },
         "computer_use_require_admin": {
           "description": "沙箱能力需要 AstrBot 管理员权限",
@@ -183,71 +180,6 @@
           "shipyard_max_sessions": {
             "description": "Shipyard Ship 会话复用上限",
             "hint": "决定了一个实例承载的最大会话数量。"
-          }
-        }
-      },
-      "local_permissions": {
-        "role": "用户身份",
-        "execution": "允许执行代码",
-        "network": "允许执行环境联网",
-        "filesystem": "文件访问范围",
-        "scopes": {
-          "workspace": "工作区",
-          "host": "整个环境"
-        },
-        "scopeHints": {
-          "none": "不允许访问任何文件",
-          "workspace": "受限的工作区、临时目录和技能文件。",
-          "workspaceUnsupported": "当前系统不支持受限工作区文件访问。",
-          "host": "AstrBot 所在运行环境的所有文件。"
-        },
-        "scopeDetails": {
-          "account": "1. 可访问 AstrBot 运行账户有权限访问的文件。",
-          "docker": "2. 如果通过 Docker 部署，则仅可访问容器内及挂载的文件，并非宿主机全部文件。"
-        },
-        "roles": {
-          "member": "普通成员",
-          "admin": "管理员"
-        },
-        "modes": {
-          "none": "关闭"
-        },
-        "runtimeUnknown": "运行环境信息不可用。",
-        "memberWarning": "普通成员已获得联网或整个环境访问权限。",
-        "executionInactive": "未生效",
-        "executionInactiveHelp": "查看未生效原因",
-        "executionBlocked": "{role}已开启代码执行，但当前无法满足所配置的隔离限制。原因：{reason}",
-        "runtime": {
-          "os": "操作系统",
-          "arch": "架构",
-          "sandbox": "本地隔离",
-          "unavailableHint": "沙箱启动失败，受限 Shell/Python 执行及工作区文件搜索会受到影响。请根据下方错误检查系统安全策略（如 Linux 的 AppArmor、用户命名空间限制）或容器限制，修复后重启 AstrBot 重新检测。",
-          "dialog": {
-            "intro": "利用 macOS 的 Seatbelt 或 Linux 的 bubblewrap（bwrap）技术，为 AstrBot Agent 的执行提供安全隔离，以限制不同用户使用 AstrBot Agent 时的文件访问范围和联网权限，获得更高的安全性。",
-            "startupError": "查看启动错误",
-            "documentation": "查看详细配置文档"
-          },
-          "close": "关闭",
-          "setupHint": {
-            "missing": "安装 {dependency} 以获得完整的本地隔离功能。",
-            "unavailable": "配置 {backend}，启用完整的本地隔离功能。",
-            "unsupported": "了解本地隔离支持情况。"
-          },
-          "isolationFailure": {
-            "missing": "缺少 {dependency}。",
-            "unavailable": "{backend} 启动探测失败。",
-            "unsupported": "当前系统不支持本地进程隔离。"
-          },
-          "executionUnavailable": {
-            "missing": "缺少 {dependency}，无法在“文件访问范围”选择“工作区”时允许执行代码。",
-            "unavailable": "{backend} 无法启动，无法在“文件访问范围”选择“工作区”时允许执行代码。",
-            "unsupported": "当前系统不支持本地隔离，无法在“文件访问范围”选择“工作区”时允许执行代码。"
-          },
-          "status": {
-            "detected": "{backend}",
-            "missing": "缺少 {dependency}",
-            "unavailable": "{backend} · 已安装但无法启动",
-            "unsupported": "暂不支持"
           }
         }
       }

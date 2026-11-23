@@ -108,15 +108,12 @@
     },
     "agent_computer_use": {
       "description": "Agent Computer Use",
-      "hint": "Allows the AstrBot to access and use your computer or an sandbox environment to perform more complex tasks. See: [Agent Sandbox Environment](https://docs.astrbot.app/en/use/astrbot-agent-sandbox.html).",
+      "hint": "Allows the Agent to use an isolated third-party sandbox environment to perform more complex tasks. See: [Agent Sandbox Environment](https://docs.astrbot.app/en/use/astrbot-agent-sandbox.html).",
       "provider_settings": {
         "computer_use_runtime": {
           "description": "Computer Use Runtime",
           "hint": "Environment the Agent is allowed to access. With the third-party sandbox, every agent file operation (skills included) happens inside the Shipyard Neo sandbox; Codex only orchestrates and never touches this host's files.",
-          "labels": ["No environment", "Local machine", "Third-party sandbox"]
-        },
-        "computer_use_local_permissions": {
-          "description": "Local Permission Policies"
+          "labels": ["No environment", "Third-party sandbox"]
         },
         "computer_use_require_admin": {
           "description": "Require Admin Permission for Sandbox",
@@ -181,71 +178,6 @@
           "shipyard_max_sessions": {
             "description": "Shipyard Max Sessions",
             "hint": "Maximum number of Shipyard sessions an instance can handle."
-          }
-        }
-      },
-      "local_permissions": {
-        "role": "Role",
-        "execution": "Allow code execution",
-        "network": "Allow execution network access",
-        "filesystem": "File access scope",
-        "scopes": {
-          "workspace": "Workspace",
-          "host": "Entire environment"
-        },
-        "scopeHints": {
-          "none": "No file access allowed",
-          "workspace": "Restricted workspace, temporary directories, and skill files.",
-          "workspaceUnsupported": "Restricted workspace file access is unavailable on this platform.",
-          "host": "All files in the environment where AstrBot runs."
-        },
-        "scopeDetails": {
-          "account": "1. Access is limited to files permitted by the account running AstrBot.",
-          "docker": "2. If deployed through Docker, only files inside the container and mounted files are accessible, not all files on the Docker host."
-        },
-        "roles": {
-          "member": "Member",
-          "admin": "Administrator"
-        },
-        "modes": {
-          "none": "Disabled"
-        },
-        "runtimeUnknown": "Runtime information is unavailable.",
-        "memberWarning": "Members have network access or file access across the entire environment.",
-        "executionInactive": "Inactive",
-        "executionInactiveHelp": "Why execution is inactive",
-        "executionBlocked": "Code execution is enabled for {role}, but the configured isolation requirements cannot currently be met. {reason}",
-        "runtime": {
-          "os": "OS",
-          "arch": "Architecture",
-          "sandbox": "Local isolation",
-          "unavailableHint": "Sandbox startup failed, affecting restricted Shell/Python execution and workspace file search. Use the error below to check system security policies (such as Linux AppArmor and user namespace restrictions) or container restrictions, then restart AstrBot to check again.",
-          "dialog": {
-            "intro": "Using Seatbelt on macOS or bubblewrap (bwrap) on Linux, AstrBot provides security isolation for Agent execution, restricting file access scope and network permissions for different users of AstrBot Agent to improve security.",
-            "startupError": "View startup error",
-            "documentation": "View detailed setup documentation"
-          },
-          "close": "Close",
-          "setupHint": {
-            "missing": "Install {dependency} to enable all local isolation features.",
-            "unavailable": "Configure {backend} to enable all local isolation features.",
-            "unsupported": "Learn about local isolation support."
-          },
-          "isolationFailure": {
-            "missing": "Missing {dependency}.",
-            "unavailable": "{backend} failed its startup probe.",
-            "unsupported": "Local process isolation is not supported on this platform."
-          },
-          "executionUnavailable": {
-            "missing": "Missing {dependency}; code execution cannot be enabled when File access scope is set to Workspace.",
-            "unavailable": "{backend} cannot start; code execution cannot be enabled when File access scope is set to Workspace.",
-            "unsupported": "Local isolation is unsupported on this platform; code execution cannot be enabled when File access scope is set to Workspace."
-          },
-          "status": {
-            "detected": "{backend}",
-            "missing": "Missing {dependency}",
-            "unavailable": "{backend} · Installed but cannot start",
-            "unsupported": "Unsupported"
           }
         }
       }

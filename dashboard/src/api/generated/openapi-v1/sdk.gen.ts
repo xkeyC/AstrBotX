@@ -2754,8 +2754,7 @@ export const getProviderTokenStats = <ThrowOnError extends boolean = false>(opti
 };
 
 /**
- * Get AstrBot version and runtime information
- * Runtime information is detected once at application startup. Restart AstrBot after installing sandbox dependencies to refresh it.
+ * Get AstrBot version
  */
 export const getVersion = <ThrowOnError extends boolean = false>(options?: OptionsLegacyParser<unknown, ThrowOnError>) => {
     return (options?.client ?? client).get<GetVersionResponse, GetVersionError, ThrowOnError>({

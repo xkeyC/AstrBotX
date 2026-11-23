@@ -110,15 +110,12 @@
     },
     "agent_computer_use": {
       "description": "コンピューター操作機能",
-      "hint": "AstrBot がローカル環境または隔離されたサンドボックス環境へアクセスし、より複雑なタスクを実行できるようにします。詳細：[Agent サンドボックス環境](https://docs.astrbot.app/en/use/astrbot-agent-sandbox.html)。",
+      "hint": "エージェントが隔離された外部サンドボックス環境を使用し、より複雑なタスクを実行できるようにします。詳細：[Agent サンドボックス環境](https://docs.astrbot.app/en/use/astrbot-agent-sandbox.html)。",
       "provider_settings": {
         "computer_use_runtime": {
           "description": "実行環境",
           "hint": "エージェントにアクセスを許可する環境です。外部サンドボックスでは、エージェントのファイル操作（スキルを含む）はすべて Shipyard Neo サンドボックス内で行われ、Codex はオーケストレーションのみを行い、このホストのファイルには触れません。",
-          "labels": ["環境を使用しない", "ローカルコンピューター", "外部サンドボックス"]
-        },
-        "computer_use_local_permissions": {
-          "description": "ローカル権限ポリシー"
+          "labels": ["環境を使用しない", "外部サンドボックス"]
         },
         "computer_use_require_admin": {
           "description": "サンドボックスに管理者権限を必須にする",
@@ -183,71 +180,6 @@
           "shipyard_max_sessions": {
             "description": "Shipyard Ship のセッション再利用上限",
             "hint": "1 つのインスタンスが処理できる最大セッション数を指定します。"
-          }
-        }
-      },
-      "local_permissions": {
-        "role": "ユーザー区分",
-        "execution": "コード実行を許可",
-        "network": "実行環境のネットワーク接続を許可",
-        "filesystem": "ファイルアクセス範囲",
-        "scopes": {
-          "workspace": "ワークスペース",
-          "host": "環境全体"
-        },
-        "scopeHints": {
-          "none": "すべてのファイルへのアクセスを禁止",
-          "workspace": "制限されたワークスペース、一時ディレクトリ、スキルファイル。",
-          "workspaceUnsupported": "このプラットフォームでは制限付きワークスペースのファイルアクセスを利用できません。",
-          "host": "AstrBot が動作する環境内のすべてのファイル。"
-        },
-        "scopeDetails": {
-          "account": "1. AstrBot の実行アカウントに権限があるファイルにアクセスできます。",
-          "docker": "2. Docker でデプロイした場合、コンテナ内およびマウントされたファイルのみが対象で、Docker ホストの全ファイルではありません。"
-        },
-        "roles": {
-          "member": "一般メンバー",
-          "admin": "管理者"
-        },
-        "modes": {
-          "none": "無効"
-        },
-        "runtimeUnknown": "実行環境の情報を取得できません。",
-        "memberWarning": "一般メンバーにネットワーク接続または環境全体へのアクセスが許可されています。",
-        "executionInactive": "未適用",
-        "executionInactiveHelp": "コード実行が適用されない理由",
-        "executionBlocked": "{role}のコード実行は有効ですが、設定された隔離要件を現在満たせません。理由：{reason}",
-        "runtime": {
-          "os": "OS",
-          "arch": "アーキテクチャ",
-          "sandbox": "ローカル隔離",
-          "unavailableHint": "サンドボックスの起動に失敗したため、制限付きの Shell/Python 実行とワークスペース内のファイル検索に影響があります。以下のエラーを参考に、システムのセキュリティポリシー（Linux の AppArmor やユーザー名前空間の制限など）またはコンテナの制限を確認し、修正後に AstrBot を再起動して再検査してください。",
-          "dialog": {
-            "intro": "macOS の Seatbelt または Linux の bubblewrap（bwrap）を利用して、AstrBot Agent の実行環境を安全に隔離し、AstrBot Agent を利用する各ユーザーのファイルアクセス範囲とネットワーク権限を制限することで、安全性を高めます。",
-            "startupError": "起動エラーを確認",
-            "documentation": "詳しい設定ドキュメントを見る"
-          },
-          "close": "閉じる",
-          "setupHint": {
-            "missing": "{dependency} をインストールして、すべてのローカル隔離機能を有効にします。",
-            "unavailable": "{backend} を設定して、すべてのローカル隔離機能を有効にします。",
-            "unsupported": "ローカル隔離の対応状況を確認します。"
-          },
-          "isolationFailure": {
-            "missing": "{dependency} が見つかりません。",
-            "unavailable": "{backend} の起動テストに失敗しました。",
-            "unsupported": "このプラットフォームではローカルプロセス隔離はサポートされていません。"
-          },
-          "executionUnavailable": {
-            "missing": "{dependency} が見つからないため、「ファイルアクセス範囲」で「ワークスペース」を選択している場合、コード実行を有効にできません。",
-            "unavailable": "{backend} を起動できないため、「ファイルアクセス範囲」で「ワークスペース」を選択している場合、コード実行を有効にできません。",
-            "unsupported": "このプラットフォームではローカル隔離がサポートされていないため、「ファイルアクセス範囲」で「ワークスペース」を選択している場合、コード実行を有効にできません。"
-          },
-          "status": {
-            "detected": "{backend}",
-            "missing": "{dependency} が見つかりません",
-            "unavailable": "{backend} · インストール済みですが起動できません",
-            "unsupported": "未対応"
           }
         }
       }

@@ -20,7 +20,6 @@ from pathlib import Path
 from astrbot.api import logger, sp
 from astrbot.core import LogBroker, LogManager
 from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
-from astrbot.core.computer.computer_client import shutdown_local_booter
 from astrbot.core.config.default import VERSION
 from astrbot.core.conversation_mgr import ConversationManager
 from astrbot.core.cron import CronJobManager
@@ -330,8 +329,6 @@ class AstrBotCoreLifecycle:
         if self.cron_manager:
             await self.cron_manager.shutdown()
 
-        await shutdown_local_booter()
-
         for plugin in self.plugin_manager.context.get_all_stars():
             try:
                 await self.plugin_manager._terminate_plugin(plugin)
@@ -368,7 +365,6 @@ class AstrBotCoreLifecycle:
 
     async def restart(self) -> None:
         """重启 AstrBot 核心生命周期管理类, 终止各个管理器并重新加载平台实例"""
-        await shutdown_local_booter()
         await self.provider_manager.terminate()
         await self.platform_manager.terminate()
         await self.kb_manager.terminate()

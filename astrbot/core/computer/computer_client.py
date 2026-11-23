@@ -2,7 +2,6 @@ import asyncio
 import json
 import os
 import shutil
-import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -17,10 +16,8 @@ from astrbot.core.utils.astrbot_path import (
 )
 
 from .booters.base import ComputerBooter
-from .booters.local import LocalBooter, resolve_windows_shell
 
 session_booter: dict[str, ComputerBooter] = {}
-local_booter: ComputerBooter | None = None
 _MANAGED_SKILLS_FILE = ".astrbot_managed_skills.json"
 
 
@@ -118,7 +115,6 @@ def _collect_sync_skill_dirs() -> list[tuple[str, Path]]:
     sync_dirs: list[tuple[str, Path]] = []
     for skill in skill_manager.list_skills(
         active_only=False,
-        runtime="local",
         show_sandbox_path=False,
     ):
         if skill.source_type == "sandbox_only":
@@ -605,9 +601,7 @@ async def get_booter(
     config = context.get_config(umo=session_id)
 
     runtime = config.get("provider_settings", {}).get("computer_use_runtime", "none")
-    if runtime == "local":
-        return get_local_booter()
-    elif runtime == "none":
+    if runtime != "sandbox":
         raise RuntimeError("Sandbox runtime is disabled by configuration.")
 
     sandbox_cfg = config.get("provider_settings", {}).get("sandbox", {})
@@ -620,7 +614,7 @@ async def get_booter(
             # Clean up old booter before rebuilding so sandbox resources
             # on Bay (containers, volumes, networks) are not leaked.
             # Only ShipyardNeoBooter supports delete_sandbox; other booters
-            # (local, boxlite, cua, etc.) are not backed by a remote sandbox
+            # (boxlite, cua, etc.) are not backed by a remote sandbox
             # manager and don't need it.
             try:
                 if booter_type == "shipyard_neo":
@@ -758,28 +752,3 @@ async def sync_skills_to_active_sandboxes() -> None:
                 session_id,
                 e,
             )
-
-
-def get_local_booter() -> ComputerBooter:
-    global local_booter
-    if local_booter is None:
-        local_booter = LocalBooter()
-        if sys.platform == "win32":
-            logger.info(
-                "[Computer] Windows local runtime shell: %s",
-                resolve_windows_shell(),
-            )
-    return local_booter
-
-
-async def shutdown_local_booter() -> None:
-    """Shut down managed local computer resources without creating a booter."""
-    global local_booter
-    if local_booter is None:
-        return
-    booter = local_booter
-    local_booter = None
-    try:
-        await booter.shutdown()
-    except Exception as exc:
-        logger.warning("[Computer] Failed to shut down local booter: %s", exc)

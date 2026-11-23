@@ -18,6 +18,7 @@ from astrbot.core.tools.computer_tools.codex_exec import (
 )
 
 UMO = "aiocqhttp:GroupMessage:30003"
+_SESSION = SandboxSession(session_id="sess", directory="/tmp/astrbot-exec/sess")
 
 
 @pytest.fixture(autouse=True)
@@ -118,9 +119,9 @@ async def test_watch_background_session_starts_one_task_per_session(monkeypatch)
 
     monkeypatch.setattr(codex_exec, "_watch", _fake_watch)
 
-    codex_exec.watch_background_session(_ctx(), UMO, "sess-1")
-    codex_exec.watch_background_session(_ctx(), UMO, "sess-1")
-    codex_exec.watch_background_session(_ctx(), UMO, "sess-2")
+    codex_exec.watch_background_session(_ctx(), UMO, "sess-1", sandbox=_SESSION)
+    codex_exec.watch_background_session(_ctx(), UMO, "sess-1", sandbox=_SESSION)
+    codex_exec.watch_background_session(_ctx(), UMO, "sess-2", sandbox=_SESSION)
     await asyncio.gather(*list(codex_exec._watchers.values()))
     await asyncio.sleep(0)
 
@@ -140,7 +141,7 @@ async def test_the_watcher_remembers_who_started_the_command(monkeypatch):
     monkeypatch.setattr(codex_exec, "_watch", _fake_watch)
 
     codex_exec.watch_background_session(
-        _ctx(sender_id="20017", role="admin"), UMO, "sess-9"
+        _ctx(sender_id="20017", role="admin"), UMO, "sess-9", sandbox=_SESSION
     )
     await asyncio.gather(*list(codex_exec._watchers.values()))
 
@@ -166,7 +167,7 @@ async def test_a_completion_is_delivered_as_that_sender_s_message(monkeypatch):
         plugin_context=object(),
         umo=UMO,
         session_id="sess-3",
-        sandbox=None,
+        sandbox=_SESSION,
         sender_id="20017",
         is_admin=False,
     )
@@ -191,7 +192,7 @@ async def test_a_failing_delivery_does_not_escape_the_watcher(monkeypatch):
         plugin_context=object(),
         umo=UMO,
         session_id="sess-4",
-        sandbox=None,
+        sandbox=_SESSION,
         sender_id="20017",
         is_admin=False,
     )

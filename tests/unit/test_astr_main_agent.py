@@ -299,7 +299,10 @@ async def test_proactive_agent_respects_runtime_and_safety_settings(
     mock_conversation,
     tmp_path,
 ):
-    """Build real proactive requests without loading tools outside the runtime."""
+    """Build real proactive requests without loading tools outside the runtime.
+
+    A stale ``local`` value of the removed local runtime loads no tools.
+    """
     provider_settings = {
         "computer_use_require_admin": False,
         "sandbox": {"booter": "cua"},
@@ -368,7 +371,7 @@ async def test_proactive_agent_respects_runtime_and_safety_settings(
     if runtime == "sandbox":
         assert "astrbot_cua_screenshot" in tool_names
         assert "CUA Desktop Control" in _dynamic_context_text(request)
-    assert ("astrbot_execute_shell" in tool_names) == (runtime in {"local", "sandbox"})
+    assert ("astrbot_execute_shell" in tool_names) == (runtime == "sandbox")
     assert (
         ama.LLM_SAFETY_MODE_SYSTEM_PROMPT.strip() in _dynamic_context_text(request)
     ) == safety_mode
@@ -402,60 +405,6 @@ def test_append_system_reminders_includes_weekday(mock_event):
         )
 
     assert "Sent at: 2026-06-08 12:34 (UTC), Monday" in (_dynamic_context_text(req))
-
-
-def test_local_mode_prompt_uses_windows_powershell_51():
-    with (
-        patch("astrbot.core.astr_main_agent.platform.system", return_value="Windows"),
-        patch(
-            "astrbot.core.astr_main_agent.resolve_windows_shell",
-            return_value="powershell.exe",
-        ),
-    ):
-        prompt = ama._build_local_mode_prompt()
-
-    assert "Windows PowerShell 5.1 (powershell.exe)" in prompt
-    assert "PowerShell 7-only syntax" in prompt
-    assert "cmd.exe" not in prompt
-
-
-def test_local_mode_prompt_hints_pwsh_when_resolved():
-    with (
-        patch("astrbot.core.astr_main_agent.platform.system", return_value="Windows"),
-        patch(
-            "astrbot.core.astr_main_agent.resolve_windows_shell",
-            return_value="pwsh.exe",
-        ),
-    ):
-        prompt = ama._build_local_mode_prompt()
-
-    assert "PowerShell 7 (pwsh.exe)" in prompt
-    assert "Windows PowerShell 5.1" not in prompt
-    assert "Unix-like" not in prompt
-
-
-def test_local_mode_prompt_ignores_pwsh_on_non_windows():
-    with (
-        patch("astrbot.core.astr_main_agent.platform.system", return_value="Linux"),
-        patch(
-            "astrbot.core.astr_main_agent.resolve_windows_shell",
-            return_value="pwsh.exe",
-        ),
-    ):
-        prompt = ama._build_local_mode_prompt()
-
-    assert "Unix-like" in prompt
-    assert "POSIX-compatible" in prompt
-    assert "PowerShell" not in prompt
-
-
-def test_local_mode_prompt_keeps_posix_shell_guidance():
-    with patch("astrbot.core.astr_main_agent.platform.system", return_value="Linux"):
-        prompt = ama._build_local_mode_prompt()
-
-    assert "Unix-like" in prompt
-    assert "POSIX-compatible" in prompt
-    assert "PowerShell" not in prompt
 
 
 class TestMainAgentBuildConfig:
@@ -1253,136 +1202,16 @@ class TestEnsurePersonaAndSkills:
         assert "Persona Instructions" not in _dynamic_context_text(req)
 
     @pytest.mark.asyncio
-    async def test_ensure_skills_includes_workspace_skills(
-        self,
-        monkeypatch,
-        tmp_path,
-        mock_event,
-        mock_context,
-    ):
-        module = ama
-        data_dir = tmp_path / "data"
-        global_skills_dir = tmp_path / "global_skills"
-        plugins_dir = tmp_path / "plugins"
-        workspaces_dir = tmp_path / "workspaces"
-        for path in (data_dir, global_skills_dir, plugins_dir):
-            path.mkdir(parents=True, exist_ok=True)
-
-        global_skill_dir = global_skills_dir / "workspace-skill"
-        global_skill_dir.mkdir(parents=True)
-        global_skill_dir.joinpath("SKILL.md").write_text(
-            "---\ndescription: Global scoped skill.\n---\n",
-            encoding="utf-8",
-        )
-
-        workspace_root = workspaces_dir / module.normalize_umo_for_workspace(
-            mock_event.unified_msg_origin
-        )
-        workspace_skill_dir = workspace_root / "skills" / "workspace-skill"
-        workspace_skill_dir.mkdir(parents=True)
-        workspace_skill_dir.joinpath("SKILL.md").write_text(
-            "---\ndescription: Workspace scoped skill.\n---\n",
-            encoding="utf-8",
-        )
-
-        monkeypatch.setattr(
-            module,
-            "get_astrbot_workspaces_path",
-            lambda: str(workspaces_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_data_path",
-            lambda: str(data_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_skills_path",
-            lambda: str(global_skills_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_plugin_path",
-            lambda: str(plugins_dir),
-        )
-
-        req = ProviderRequest()
-        req.conversation = MagicMock(persona_id=None)
-        runtime_config = {"computer_use_runtime": "local"}
-
-        await module._ensure_persona_and_skills(
-            req, runtime_config, mock_context, mock_event
-        )
-
-        dynamic_context = _dynamic_context_text(req)
-        assert "**workspace-skill**" in dynamic_context
-        assert "Workspace scoped skill." in dynamic_context
-        assert "Global scoped skill." not in dynamic_context
-        assert (
-            str(workspace_skill_dir / "SKILL.md").replace("\\", "/") in dynamic_context
-        )
-
-    @pytest.mark.asyncio
-    async def test_ensure_skills_respects_empty_persona_skills_for_workspace(
-        self,
-        monkeypatch,
-        tmp_path,
-        mock_event,
-        mock_context,
-    ):
-        module = ama
-        data_dir = tmp_path / "data"
-        global_skills_dir = tmp_path / "global_skills"
-        plugins_dir = tmp_path / "plugins"
-        workspaces_dir = tmp_path / "workspaces"
-        for path in (data_dir, global_skills_dir, plugins_dir):
-            path.mkdir(parents=True, exist_ok=True)
-
-        workspace_root = workspaces_dir / module.normalize_umo_for_workspace(
-            mock_event.unified_msg_origin
-        )
-        workspace_skill_dir = workspace_root / "skills" / "workspace-skill"
-        workspace_skill_dir.mkdir(parents=True)
-        workspace_skill_dir.joinpath("SKILL.md").write_text(
-            "---\ndescription: Workspace scoped skill.\n---\n",
-            encoding="utf-8",
-        )
-
-        monkeypatch.setattr(
-            module,
-            "get_astrbot_workspaces_path",
-            lambda: str(workspaces_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_data_path",
-            lambda: str(data_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_skills_path",
-            lambda: str(global_skills_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_plugin_path",
-            lambda: str(plugins_dir),
-        )
-
-        persona = {"name": "no-skills", "prompt": "", "skills": []}
-        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
-            return_value=("no-skills", persona, None, False)
-        )
-        req = ProviderRequest()
-        req.conversation = MagicMock(persona_id="no-skills")
-
-        await module._ensure_persona_and_skills(
-            req, {"computer_use_runtime": "local"}, mock_context, mock_event
-        )
-
-        assert "Workspace scoped skill." not in _dynamic_context_text(req)
-        assert "## Skills" not in _dynamic_context_text(req)
-
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "runtime_settings",
-        [{}, {"computer_use_runtime": "none"}, {"computer_use_runtime": "sandbox"}],
+        [
+            {},
+            {"computer_use_runtime": "none"},
+            {"computer_use_runtime": "sandbox"},
+            {"computer_use_runtime": "local"},
+        ],
     )
-    async def test_ensure_skills_skips_workspace_skills_outside_local_runtime(
+    async def test_ensure_skills_ignores_session_workspace_skills(
         self,
         runtime_settings,
         monkeypatch,
@@ -1526,26 +1355,13 @@ class TestEnsurePersonaAndSkills:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("role", ["admin", "member"])
-    @pytest.mark.parametrize("isolation_status", ["detected", "missing", "unavailable", "unsupported"])
-    @pytest.mark.parametrize(
-        ("allow_execution", "allow_network"),
-        [(True, False), (True, True), (False, False)],
-    )
-    async def test_persona_empty_tools_keeps_local_runtime_builtin_tools(
+    async def test_persona_empty_tools_keeps_sandbox_runtime_builtin_tools(
         self,
-        monkeypatch,
         mock_event,
         mock_context,
         mock_provider,
         role,
-        allow_execution,
-        allow_network,
-        isolation_status,
     ):
-        monkeypatch.setattr(
-            "astrbot.core.tools.computer_tools.util.get_process_sandbox_status",
-            lambda: {"status": isolation_status},
-        )
         module = ama
         persona = {"name": "locked", "prompt": "No tools.", "tools": []}
         mock_context.persona_manager.resolve_selected_persona = AsyncMock(
@@ -1554,20 +1370,12 @@ class TestEnsurePersonaAndSkills:
         mock_event.platform_meta.support_proactive_message = False
         mock_event.role = role
         mock_context.get_config.return_value = {
-            "provider_settings": {
-                "computer_use_runtime": "local",
-                "computer_use_local_permissions": {
-                    role: {
-                        "allow_execution": allow_execution,
-                        "allow_network": allow_network,
-                        "filesystem_scope": "workspace",
-                    }
-                },
-            }
+            "provider_settings": {"computer_use_runtime": "sandbox"}
         }
         config = module.MainAgentBuildConfig(
             tool_call_timeout=60,
-            computer_use_runtime="local",
+            computer_use_runtime="sandbox",
+            sandbox_cfg={"booter": "boxlite"},
             add_cron_tools=False,
         )
         req = ProviderRequest(prompt="hello")
@@ -1597,19 +1405,9 @@ class TestEnsurePersonaAndSkills:
             assert result.provider_request.func_tool is not None
             tool_names = result.provider_request.func_tool.names()
             assert "astrbot_execute_shell" in tool_names
-            assert "astrbot_shell_session" in tool_names
+            assert "astrbot_file_read_tool" in tool_names
+            assert "astrbot_shell_session" not in tool_names
             assert "astrbot_execute_python" not in tool_names
-            shell_tool = result.provider_request.func_tool.get_tool(
-                "astrbot_execute_shell"
-            )
-            assert shell_tool is not None
-            assert "background" not in shell_tool.parameters["properties"]
-            assert "yield_time_ms" in shell_tool.parameters["properties"]
-            assert result.provider_request.system_prompt.count(
-                module.LOCAL_NETWORK_POLICY_NOTICE
-            ) == int(allow_execution and not allow_network and isolation_status == "detected")
-            assert "The Agent Computer Use runtime is the local environment" not in result.provider_request.system_prompt
-            assert "These restrictions require Local process isolation" not in result.provider_request.system_prompt
         finally:
             if result.reset_coro:
                 result.reset_coro.close()

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import platform
 import re
 import threading
 import time
@@ -24,7 +23,6 @@ from astrbot.core.agent.runners.codex.constants import (
     CODEX_RUNNER_TYPE,
     CODEX_VOICE_STATS_TYPE,
 )
-from astrbot.core.computer.process_sandbox import get_process_sandbox_status
 from astrbot.core.config import VERSION
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
@@ -88,12 +86,6 @@ class StatService:
         self.dashboard_static_folder = dashboard_static_folder
         self.storage_cleaner = StorageCleaner(config)
 
-        self.runtime = {
-            "os": platform.system().lower(),
-            "arch": platform.machine(),
-            "sandbox": get_process_sandbox_status().copy(),
-        }
-
     async def restart_core(self) -> None:
         if DEMO_MODE:
             raise StatServiceError(
@@ -143,7 +135,6 @@ class StatService:
                 "change_pwd_hint": False,
                 "md5_pwd_hint": False,
                 "password_upgrade_required": False,
-                "runtime": self.runtime,
             }
         storage_upgraded = await is_password_storage_upgraded(
             self.db_helper,
@@ -163,7 +154,6 @@ class StatService:
             "change_pwd_hint": await self.is_default_cred(),
             "md5_pwd_hint": md5_pwd_hint,
             "password_upgrade_required": not storage_upgraded,
-            "runtime": self.runtime,
         }
 
     async def get_public_versions(

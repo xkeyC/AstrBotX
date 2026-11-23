@@ -1,7 +1,7 @@
 """Codex-style ``apply_patch`` over AstrBot's execution environment.
 
 Codex models are trained on this patch format, so offering it (next to the
-plain edit tool) makes file edits in the sandbox or local workspace reliable:
+plain edit tool) makes file edits in the sandbox reliable:
 
     *** Begin Patch
     *** Add File: notes/todo.md
@@ -17,25 +17,17 @@ plain edit tool) makes file edits in the sandbox or local workspace reliable:
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 
 from astrbot.api import FunctionTool, logger
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.computer.computer_client import get_booter
-from astrbot.core.computer.local_file_security import open_file_in_allowed_roots
 
 from ..registry import builtin_tool
-from .fs import _is_restricted_env, _normalize_rw_path, _write_allowed_roots
-from .util import (
-    check_local_file_permission,
-    is_local_runtime,
-    workspace_root_for_context,
-)
 
-_COMPUTER_RUNTIME_TOOL_CONFIG = {
-    "provider_settings.computer_use_runtime": ("local", "sandbox"),
+_SANDBOX_RUNTIME_TOOL_CONFIG = {
+    "provider_settings.computer_use_runtime": "sandbox",
 }
 
 BEGIN = "*** Begin Patch"
@@ -172,7 +164,7 @@ def apply_hunks(content: str, hunks: list[Hunk]) -> str:
     return out + "\n" if trailing_newline or not content else out
 
 
-@builtin_tool(config=_COMPUTER_RUNTIME_TOOL_CONFIG)
+@builtin_tool(config=_SANDBOX_RUNTIME_TOOL_CONFIG)
 @dataclass
 class ApplyPatchTool(FunctionTool):
     name: str = "apply_patch"
@@ -192,54 +184,16 @@ class ApplyPatchTool(FunctionTool):
     )
 
     async def call(self, context: ContextWrapper[AstrAgentContext], patch: str) -> str:
-        # The same Local file policy as the file tools: no access at all for
-        # a role with filesystem scope "none", approved roots for "workspace".
-        if permission_error := check_local_file_permission(context):
-            return permission_error
         try:
             ops = parse_patch(patch)
         except PatchError as e:
             return f"Error: invalid patch: {e}"
         event = context.context.event
-        umo = str(event.unified_msg_origin)
-        local_env = is_local_runtime(context)
-        restricted = _is_restricted_env(context)
-        root = await workspace_root_for_context(context) if local_env else None
-
-        is_admin = event.role == "admin"
-
-        def norm(path: str, *, create: bool = False) -> str:
-            if not local_env:
-                return path.strip()
-            normalized = _normalize_rw_path(
-                path,
-                restricted=restricted,
-                local_env=True,
-                umo=umo,
-                write=True,
-                allow_installed_skill_write=is_admin,
-                current_workspace_root=root,
-            )
-            if restricted:
-                # As the file tools: refuse links out of the allowed roots
-                # (symlinks, junctions, multiply linked files).
-                os.close(
-                    open_file_in_allowed_roots(
-                        normalized,
-                        _write_allowed_roots(
-                            umo, root, include_installed_skills=is_admin
-                        ),
-                        access="write" if create else "edit",
-                        create_parents=create,
-                    )
-                )
-            return normalized
-
         try:
             sb = await get_booter(context.context.context, event.unified_msg_origin)
             done: list[str] = []
             for op in ops:
-                path = norm(op.path, create=op.kind == "add")
+                path = op.path
                 if op.kind == "add":
                     content = "\n".join(op.add_lines) + "\n"
                     result = await sb.fs.write_file(path=path, content=content)
@@ -252,7 +206,7 @@ class ApplyPatchTool(FunctionTool):
                     if not read.get("success", True) and "content" not in read:
                         return f"Error: cannot read {op.path}: {read.get('error')}"
                     new_content = apply_hunks(str(read.get("content") or ""), op.hunks)
-                    target = norm(op.move_to, create=True) if op.move_to else path
+                    target = op.move_to or path
                     result = await sb.fs.write_file(path=target, content=new_content)
                     if op.move_to and target != path:
                         await sb.fs.delete_file(path)

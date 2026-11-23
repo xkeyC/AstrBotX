@@ -6,8 +6,8 @@ session id lets the model keep reading or send input. That beats one-shot
 execution for anything interactive or slow (installers, REPLs, servers, test
 watchers), so these replace the plain shell tools when Codex drives the turn.
 
-The local runtime uses AstrBot's managed shell sessions. The Shipyard Neo SDK
-only offers one-shot ``exec``, so a session is emulated inside the sandbox: the
+The Shipyard Neo SDK only offers one-shot ``exec``, so a session is emulated
+inside the sandbox: the
 command runs in a detached tmux pane with ``pipe-pane`` mirroring it into a log
 file, and each poll reads the log from the last offset. Without tmux the command
 runs detached instead, with stdin arriving through a FIFO held open by a sleeper
@@ -24,7 +24,6 @@ import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from astrbot.api import FunctionTool
@@ -32,21 +31,14 @@ from astrbot.core import logger
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
-from astrbot.core.computer.booters.local import LocalShellComponent
 from astrbot.core.computer.computer_client import get_booter
 from astrbot.core.message.message_event_result import MessageChain
 
 from ..registry import builtin_tool
-from .fs import _read_allowed_roots, _write_allowed_roots
-from .util import (
-    check_local_execution_permission,
-    get_local_permission_policy,
-    is_local_runtime,
-    workspace_root_for_context,
-)
+from .util import check_admin_permission
 
-_COMPUTER_RUNTIME_TOOL_CONFIG = {
-    "provider_settings.computer_use_runtime": ("local", "sandbox"),
+_SANDBOX_RUNTIME_TOOL_CONFIG = {
+    "provider_settings.computer_use_runtime": "sandbox",
 }
 
 DEFAULT_YIELD_TIME_MS = 10_000
@@ -250,7 +242,7 @@ class _WatchTarget:
     plugin_context: Any
     umo: str
     session_id: str
-    sandbox: SandboxSession | None
+    sandbox: SandboxSession
     #: The command's initiator. The completion is delivered as a message from
     #: them, so their permission rule and their place in the queue apply.
     sender_id: str
@@ -264,7 +256,7 @@ def watch_background_session(
     umo: str,
     session_id: str,
     *,
-    sandbox: SandboxSession | None = None,
+    sandbox: SandboxSession,
 ) -> None:
     """Delivers a command's result to the chat once it finishes.
 
@@ -299,46 +291,33 @@ async def _watch(target: _WatchTarget) -> None:
     sandbox = target.sandbox
     await asyncio.sleep(WATCH_GRACE_SECONDS)
     deadline = time.monotonic() + WATCH_MAX_SECONDS
-    cursor = sandbox.cursor if sandbox else 0
+    cursor = sandbox.cursor
     try:
         booter = await get_booter(plugin_context, umo)
     except Exception as e:  # noqa: BLE001 - sandbox may be gone by now
         logger.debug("exec watcher could not reach the runtime for %s: %s", umo, e)
         return
     while time.monotonic() < deadline:
-        if sandbox is not None and SandboxSessions.get(umo, session_id) is None:
+        if SandboxSessions.get(umo, session_id) is None:
             return  # the agent polled it through to the end itself
         try:
-            if sandbox is not None:
-                raw = await _sandbox_exec(
-                    booter.shell,
-                    _poll_script(
-                        sandbox.directory,
-                        cursor,
-                        WATCH_POLL_MS,
-                        sandbox.session_id if sandbox.tmux else None,
-                    ),
-                    timeout=WATCH_POLL_MS // 1000 + 15,
-                )
-                output, cursor, exit_code = _parse_poll(raw, cursor)
-            else:
-                result = await booter.shell.poll_session(
-                    owner_id=umo,
-                    requester_id=target.sender_id,
-                    requester_is_admin=target.is_admin,
-                    session_id=session_id,
-                    yield_time_ms=WATCH_POLL_MS,
-                    max_output_chars=COMPLETION_TAIL_CHARS,
-                )
-                output = str(result.get("stdout") or "")
-                exit_code = result.get("exit_code")
+            raw = await _sandbox_exec(
+                booter.shell,
+                _poll_script(
+                    sandbox.directory,
+                    cursor,
+                    WATCH_POLL_MS,
+                    sandbox.session_id if sandbox.tmux else None,
+                ),
+                timeout=WATCH_POLL_MS // 1000 + 15,
+            )
+            output, cursor, exit_code = _parse_poll(raw, cursor)
         except Exception as e:  # noqa: BLE001 - session gone, or runtime down
             logger.debug("exec watcher stopped for session %s: %s", session_id, e)
             return
         if exit_code is None:
             continue
-        if sandbox is not None:
-            SandboxSessions.drop(umo, session_id)
+        SandboxSessions.drop(umo, session_id)
         if claim_completion(umo, session_id):
             await _deliver(target, exit_code, output)
         return
@@ -349,15 +328,14 @@ async def _watch(target: _WatchTarget) -> None:
         session_id,
         WATCH_MAX_SECONDS // 60,
     )
-    if sandbox is not None:
-        SandboxSessions.drop(umo, session_id)
-        if sandbox.tmux:
-            with contextlib.suppress(Exception):
-                await _sandbox_exec(
-                    booter.shell,
-                    f"tmux kill-session -t {shlex.quote(session_id)} 2>/dev/null; true",
-                    timeout=30,
-                )
+    SandboxSessions.drop(umo, session_id)
+    if sandbox.tmux:
+        with contextlib.suppress(Exception):
+            await _sandbox_exec(
+                booter.shell,
+                f"tmux kill-session -t {shlex.quote(session_id)} 2>/dev/null; true",
+                timeout=30,
+            )
     if claim_completion(umo, session_id):
         with contextlib.suppress(Exception):
             await plugin_context.send_message(
@@ -586,7 +564,7 @@ def _write_stdin_script(session: SandboxSession, chars: str) -> str:
 # -------------------------------------------------------------------- the tools
 
 
-@builtin_tool(config=_COMPUTER_RUNTIME_TOOL_CONFIG)
+@builtin_tool(config=_SANDBOX_RUNTIME_TOOL_CONFIG)
 @dataclass
 class ExecCommandTool(FunctionTool):
     name: str = "exec_command"
@@ -639,97 +617,13 @@ class ExecCommandTool(FunctionTool):
         max_output_tokens: Any = DEFAULT_MAX_OUTPUT_TOKENS,
         shell: str | None = None,
     ) -> ToolExecResult:
-        # The Local permission policy of the caller's role, as the shell tool
-        # applies it (outside Local: the administrator gate).
-        local_policy, permission_error = check_local_execution_permission(
-            context, "Shell execution"
-        )
-        if permission_error:
+        if permission_error := check_admin_permission(context, "Shell execution"):
             return permission_error
-        event = context.context.event
-        umo = event.unified_msg_origin
+        umo = context.context.event.unified_msg_origin
         wait_ms = clamp_yield_time(yield_time_ms)
         budget = clamp_output_tokens(max_output_tokens)
         booter = await get_booter(context.context.context, umo)
         started = time.monotonic()
-
-        if is_local_runtime(context):
-            if not isinstance(booter.shell, LocalShellComponent):
-                return "Error: the local shell component is unavailable."
-            creator_id = event.get_sender_id()
-            if not creator_id:
-                return "Error: sender identity is unavailable."
-            root = await workspace_root_for_context(context)
-            root.mkdir(parents=True, exist_ok=True)
-            creator_is_admin = event.role == "admin"
-            sandboxed = bool(local_policy and local_policy.requires_sandbox)
-            # A relative workdir is in the workspace. A run without host
-            # access keeps it there: the isolation mounts the working
-            # directory writable (host access mounts everything anyway).
-            cwd_path = Path(workdir).expanduser() if workdir else root
-            if not cwd_path.is_absolute():
-                cwd_path = root / cwd_path
-            cwd_path = cwd_path.resolve()
-            scope = local_policy.filesystem_scope if local_policy else "host"
-            if scope != "host" and not cwd_path.is_relative_to(root.resolve()):
-                return (
-                    f"Error: workdir must be inside the workspace ({root}) "
-                    "for this role."
-                )
-            cwd = str(cwd_path)
-            sandbox_roots = {}
-            if local_policy and local_policy.filesystem_scope == "workspace":
-                sandbox_roots = {
-                    "readable_roots": _read_allowed_roots(umo, root),
-                    "writable_roots": _write_allowed_roots(
-                        umo, root, include_installed_skills=creator_is_admin
-                    ),
-                }
-            try:
-                result = await booter.shell.exec_managed(
-                    cmd,
-                    owner_id=umo,
-                    creator_id=creator_id,
-                    creator_is_admin=creator_is_admin,
-                    sandboxed=sandboxed,
-                    permission_check=lambda: (
-                        is_local_runtime(context)
-                        and get_local_permission_policy(context) == local_policy
-                        # The original event role does not reflect admin removal.
-                        and (
-                            not creator_is_admin
-                            or str(creator_id)
-                            in context.context.context.get_config(umo=umo).get(
-                                "admins_id", []
-                            )
-                        )
-                    ),
-                    allow_network=(
-                        local_policy.allow_network if local_policy else True
-                    ),
-                    filesystem_scope=(
-                        local_policy.filesystem_scope if local_policy else "host"
-                    ),
-                    cwd=cwd,
-                    env={},
-                    # Isolated processes are capped like the shell tool's.
-                    timeout=300 if sandboxed else None,
-                    yield_time_ms=wait_ms,
-                    max_output_chars=budget * CHARS_PER_TOKEN,
-                    **sandbox_roots,
-                )
-            except (PermissionError, ValueError) as e:
-                return f"Error: {e}"
-            running = result.get("exit_code") is None
-            if running:
-                watch_background_session(context, umo, str(result["session_id"]))
-            return format_exec_response(
-                output=str(result.get("stdout") or ""),
-                wall_time_seconds=time.monotonic() - started,
-                exit_code=result.get("exit_code"),
-                session_id=str(result["session_id"]) if running else None,
-                max_output_tokens=budget,
-            )
 
         max_sessions = max_live_sessions(context)
         if SandboxSessions.count(umo) >= max_sessions:
@@ -772,7 +666,7 @@ class ExecCommandTool(FunctionTool):
         )
 
 
-@builtin_tool(config=_COMPUTER_RUNTIME_TOOL_CONFIG)
+@builtin_tool(config=_SANDBOX_RUNTIME_TOOL_CONFIG)
 @dataclass
 class WriteStdinTool(FunctionTool):
     name: str = "write_stdin"
@@ -817,52 +711,13 @@ class WriteStdinTool(FunctionTool):
         yield_time_ms: Any = 5_000,
         max_output_tokens: Any = DEFAULT_MAX_OUTPUT_TOKENS,
     ) -> ToolExecResult:
-        _, permission_error = check_local_execution_permission(
-            context, "Shell execution"
-        )
-        if permission_error:
+        if permission_error := check_admin_permission(context, "Shell execution"):
             return permission_error
-        event = context.context.event
-        umo = event.unified_msg_origin
+        umo = context.context.event.unified_msg_origin
         wait_ms = clamp_yield_time(yield_time_ms, default=5_000)
         budget = clamp_output_tokens(max_output_tokens)
         booter = await get_booter(context.context.context, umo)
         started = time.monotonic()
-
-        if is_local_runtime(context):
-            if not isinstance(booter.shell, LocalShellComponent):
-                return "Error: the local shell component is unavailable."
-            requester_id = event.get_sender_id()
-            is_admin = event.role == "admin"
-            try:
-                if chars:
-                    await booter.shell.write_session(
-                        owner_id=umo,
-                        requester_id=requester_id,
-                        requester_is_admin=is_admin,
-                        session_id=session_id,
-                        chars=chars,
-                    )
-                result = await booter.shell.poll_session(
-                    owner_id=umo,
-                    requester_id=requester_id,
-                    requester_is_admin=is_admin,
-                    session_id=session_id,
-                    yield_time_ms=wait_ms,
-                    max_output_chars=budget * CHARS_PER_TOKEN,
-                )
-            except ValueError as e:
-                return f"Error: {e}"
-            running = result.get("exit_code") is None
-            if not running:
-                claim_completion(umo, session_id)
-            return format_exec_response(
-                output=str(result.get("stdout") or ""),
-                wall_time_seconds=time.monotonic() - started,
-                exit_code=result.get("exit_code"),
-                session_id=session_id if running else None,
-                max_output_tokens=budget,
-            )
 
         session = SandboxSessions.get(umo, session_id)
         if session is None:

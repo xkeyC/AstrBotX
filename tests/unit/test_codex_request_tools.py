@@ -132,40 +132,6 @@ def test_codex_patch_and_exec_tools_are_listed_as_builtin():
 
 
 @pytest.mark.asyncio
-async def test_the_local_runtime_note_names_the_codex_shell_tools(monkeypatch):
-    def local_tools(req, _plugin_context):
-        req.func_tool = req.func_tool or ToolSet()
-        for name in ("astrbot_execute_shell", "astrbot_shell_session"):
-            req.func_tool.add_tool(_Tool(name=name, description=name))
-        req.set_context_anchor(
-            "local_runtime", codex_request._build_local_mode_prompt()
-        )
-
-    for name in ("_collect_media", "_get_session_conv", "_process_quote_message"):
-        monkeypatch.setattr(codex_request, name, AsyncMock(return_value=None))
-    monkeypatch.setattr(codex_request, "_apply_kb", AsyncMock())
-    monkeypatch.setattr(codex_request, "_decorate_llm_request", AsyncMock())
-    monkeypatch.setattr(codex_request, "_apply_local_env_tools", local_tools)
-    monkeypatch.setattr(codex_request, "_proactive_cron_job_tools", MagicMock())
-    plugin_context = MagicMock()
-    plugin_context.get_config.return_value = {}
-
-    req = ProviderRequest(prompt="hi")
-    await codex_request.prepare_codex_request(
-        _Event(),
-        req,
-        plugin_context,
-        {"provider_settings": {"computer_use_runtime": "local"}},
-        {},
-    )
-
-    note = req.context_anchors["local_runtime"]
-    assert "write_stdin" in note and "exec_command" in note
-    assert "astrbot_shell_session" not in note
-    assert "astrbot_shell_session" not in req.func_tool.names()
-
-
-@pytest.mark.asyncio
 async def test_a_plugin_request_keeps_its_own_images(monkeypatch, tmp_path):
     event = _Event()
     tracked: list[str] = []

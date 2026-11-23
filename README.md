@@ -98,8 +98,6 @@ runtime (`provider_settings.computer_use_runtime`, the single execution switch).
   for a person. A session left running is polled to completion in the background and its
   result is posted back to the chat.
 - `apply_patch` -- Codex's native patch format.
-- `local` runtime -- commands and file edits follow the role's Local permission policy
-  (filesystem scope, execution, network; isolated with bubblewrap / Seatbelt where required).
 - `sandbox` runtime -- every agent file operation happens inside the
   [Shipyard Neo](https://github.com/AstrBotDevs/astrbot-shipyard-neo) sandbox, including
   skills; the host filesystem is never touched.
