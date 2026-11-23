@@ -62,6 +62,8 @@ AGENT_RUNNER_CONFIG_DEFAULTS: dict[str, dict[str, Any]] = {
         # responses|chat, extra_body: {...} (chat: merged over each request
         # body), headers: {name: value}, compaction: auto|local|remote,
         # files_api: true (images uploaded once to the provider's Files API),
+        # open_model: true (open-weight model: OpenAI-encrypted history left
+        # out, a switch notice, code mode as run_code),
         # models: [{slug, context_window, auto_compact_token_limit,
         # reasoning_efforts: [...], default_reasoning_effort, image_input
         # (true/false; unset: Codex's default), metadata_json}]}] (see

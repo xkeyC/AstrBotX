@@ -305,6 +305,30 @@ def test_a_chat_provider_goes_over_the_chat_wire(tmp_path):
     assert "model_provider_options.go.files_api" not in cfg
 
 
+def test_open_model_providers_get_the_open_model_options(tmp_path):
+    """An open-weight provider gets Codex's open model mode and AstrBot's switch
+    notice; other providers get neither."""
+    opts = engine_options(
+        {
+            "codex_home": str(tmp_path),
+            "tool_mode": "code_mode_only",
+            "model_providers": [
+                {"id": "ds", "base_url": "https://api.deepseek.com", "open_model": True},
+                {"id": "oa", "base_url": "https://api.openai.com/v1"},
+                # Only a real true turns it on.
+                {"id": "x", "base_url": "https://x/v1", "open_model": "yes"},
+            ],
+        }
+    )
+    cfg = opts["config"]
+    assert cfg["model_provider_options.ds.open_model"] is True
+    notice = cfg["model_provider_options.ds.open_model_switch_notice"]
+    assert "get_group_message_history" in notice and "encrypted" in notice
+    for pid in ("oa", "x"):
+        assert f"model_provider_options.{pid}.open_model" not in cfg
+        assert f"model_provider_options.{pid}.open_model_switch_notice" not in cfg
+
+
 def test_codex_never_gets_its_own_execution(tmp_path):
     """Codex's native shell / apply_patch / view_image are not supported: every
     command runs in AstrBot's sandbox tools, whose results are moderated."""

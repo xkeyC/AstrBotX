@@ -19,6 +19,9 @@ export type ModelRow = {
 export type ProviderExtras = {
   headers: HeaderRow[]
   compaction: string
+  // Open-weight model: OpenAI-encrypted history is left out of its requests,
+  // and code mode is offered as run_code.
+  open_model: boolean
   // Chat wire: merged over each request body (a JSON object, as text).
   extra_body_json: string
   // Images uploaded once to the provider's Files API.
@@ -112,6 +115,7 @@ export function extrasFromConfig(p: any): ProviderExtras {
       value: str(value)
     })),
     compaction: COMPACTION_MODES.includes(str(p?.compaction)) ? str(p.compaction) : 'auto',
+    open_model: p?.open_model === true,
     extra_body_json:
       p?.extra_body && typeof p.extra_body === 'object' && Object.keys(p.extra_body).length
         ? JSON.stringify(p.extra_body, null, 2)
@@ -140,6 +144,7 @@ export function extrasPayload(e: ProviderExtras) {
   return {
     headers,
     compaction: e.compaction || 'auto',
+    open_model: e.open_model,
     // Text still being typed stays text (saving checks it, extrasProblem).
     extra_body: parseExtraBody(e.extra_body_json),
     files_api: e.files_api,

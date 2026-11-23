@@ -107,6 +107,8 @@
     "extras": "请求头、压缩与模型",
     "compaction": "压缩方式",
     "compactionHint": "长历史在哪里压缩。远程需要提供商支持 /responses/compact（OpenAI）。",
+    "openModel": "开源模型模式",
+    "openModelHint": "历史里由 OpenAI 加密的推理和服务端压缩内容不再发给这个提供商（它读不了）；从加密历史切过来时提醒模型去查消息历史。code mode 以 run_code 工具提供，附 TypeScript 声明和用法说明，适合开源模型。",
     "filesApi": "图片走 Files API",
     "filesApiHint": "工具返回或消息里的图片上传到提供商的 Files API（POST /files，DeepSeek、OpenAI 的格式）一次，之后的请求只按 file_id 引用，不再每次重发整张图；上传的文件 1 天后由提供商删除，到期前自动重传。",
     "extraBody": "额外请求体（JSON）",

@@ -183,6 +183,18 @@ def _without_nulls(value: T.Any) -> T.Any:
 FILES_API_EXPIRES_SECONDS = 86400
 
 
+# Told once to an open-weight model taking over a conversation whose earlier
+# history it cannot read. Group chats can look history up; private chats have
+# their own history in the thread.
+OPEN_MODEL_SWITCH_NOTICE = (
+    "Note: the model serving this conversation was switched. Part of the "
+    "earlier history was produced by the previous model in an encrypted form "
+    "that you cannot read, so some earlier context and summaries may be "
+    "missing. If you need earlier context, look it up in the message history "
+    "(in a group chat, with get_group_message_history) instead of guessing."
+)
+
+
 def model_provider_overrides(providers: T.Any) -> JsonObject:
     """Map WebUI-managed providers to Codex overrides: `model_providers.<id>`
     (endpoint, key, extra request headers) and `model_provider_options.<id>`
@@ -236,6 +248,14 @@ def model_provider_overrides(providers: T.Any) -> JsonObject:
         compaction = str(p.get("compaction") or "auto")
         if compaction in ("local", "remote"):
             out[f"model_provider_options.{pid}.compaction"] = compaction
+        # An open-weight model cannot read what OpenAI encrypted (reasoning,
+        # server-side compaction): Codex leaves it out, tells the model once
+        # that earlier context may be missing, and offers code mode as run_code.
+        if p.get("open_model") is True:
+            out[f"model_provider_options.{pid}.open_model"] = True
+            out[f"model_provider_options.{pid}.open_model_switch_notice"] = (
+                OPEN_MODEL_SWITCH_NOTICE
+            )
         models: JsonObject = {}
         for m in p.get("models") if isinstance(p.get("models"), list) else []:
             slug = str(m.get("slug") or "").strip() if isinstance(m, dict) else ""

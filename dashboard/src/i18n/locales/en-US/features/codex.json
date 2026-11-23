@@ -107,6 +107,8 @@
     "extras": "Headers, compaction and models",
     "compaction": "Compaction",
     "compactionHint": "Where long histories are compacted. Remote needs a /responses/compact endpoint (OpenAI).",
+    "openModel": "Open model mode",
+    "openModelHint": "History that OpenAI encrypted (reasoning, server-side compaction) is not sent to this provider, which cannot read it; after a switch from such history the model is told to look up message history. Code mode is offered as a run_code tool with TypeScript declarations and usage guidance, for open-weight models.",
     "filesApi": "Images via Files API",
     "filesApiHint": "Images from tools or messages are uploaded once to the provider's Files API (POST /files, DeepSeek's and OpenAI's shape) and later requests refer to them by file_id instead of sending them again; uploads expire after a day and are renewed before.",
     "extraBody": "Extra request body (JSON)",
