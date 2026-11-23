@@ -190,8 +190,8 @@ def test_the_sandbox_runtime_keeps_skills_in_the_sandbox_and_native_exec_off(
     sandbox_prompt = build_codex_skills_prompt(skills, in_sandbox=True)
     assert "/workspace/skills/demo/SKILL.md" in sandbox_prompt
     # One reader in every runtime, sandbox included.
-    assert "astrbot__astrbot_read_skill" in sandbox_prompt
-    assert "astrbot__astrbot_read_skill" in build_codex_skills_prompt(skills)
+    assert "tools.astrbot_read_skill" in sandbox_prompt
+    assert "tools.astrbot_read_skill" in build_codex_skills_prompt(skills)
 
 
 def test_sandbox_falls_back_to_a_fifo_without_tmux(monkeypatch):

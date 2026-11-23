@@ -148,7 +148,9 @@ class CodexToolBridge:
         Deferred tools from a plugin or an MCP server get a namespace of their
         own, ``astrbot__<source>``, so Codex's tool catalog lists them under
         that source; AstrBot's own tools stay in ``astrbot``. Without
-        deferral everything stays in ``astrbot``, keeping names short.
+        deferral everything stays in ``astrbot``, keeping names short. In
+        code mode Codex then names them ``<tool>`` and ``<source>__<tool>``
+        (features.code_mode.host_namespace).
         """
         self.defer = defer
         # (namespace, Codex name) -> tool

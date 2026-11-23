@@ -34,7 +34,9 @@ MAX_MENTIONED_SKILLS = 3
 SKILLS_EXTRA = "_codex_skills"
 SKILLS_IN_SANDBOX_EXTRA = "_codex_skills_in_sandbox"
 
-_READ_CALL = f"tools.astrbot__{READ_SKILL_TOOL}({{name}})"
+# AstrBot's own tools are called by their bare names in code mode
+# (features.code_mode.host_namespace).
+_READ_CALL = f"tools.{READ_SKILL_TOOL}({{name}})"
 
 # Adapted from Codex's own skills prompt (codex-rs ext/skills catalog_prompt).
 _HOW_TO_USE = f"""\

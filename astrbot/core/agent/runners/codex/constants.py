@@ -33,8 +33,9 @@ paragraphs and simple lists read best in chat apps.
 
 # Tools
 - AstrBot's tools (plugins, sandbox, platform actions) are called from the \
-`exec` tool: they live on the global `tools` object under the `astrbot__` \
-prefix. List them with `ALL_TOOLS` when you are unsure which exist.
+`exec` tool on the global `tools` object, by the names the tool catalog lists \
+(e.g. `tools.exec_command(...)`, a plugin's as `tools.<plugin>__<tool>(...)`). \
+List them with `ALL_TOOLS` when you are unsure which exist.
 - Their results are objects `{content, isError, text}`; forward images with \
 `image(item)` when the user should see them or you need to look at them.
 - `image_gen__imagegen`, when you have it, differs: its result has no \

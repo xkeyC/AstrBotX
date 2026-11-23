@@ -123,6 +123,8 @@ def test_engine_options_default_to_lean_code_mode(tmp_path):
     assert cfg["features.shell_tool"] is False
     # view_image reads the thread's environment, and threads have none.
     assert cfg["features.view_image"] is False
+    # Code mode calls AstrBot's tools by short names.
+    assert cfg["features.code_mode.host_namespace"] == "astrbot"
     assert cfg["web_search"] == "disabled"
     assert cfg["include_permissions_instructions"] is False
     assert cfg["features.code_mode.structured_dynamic_tool_results"] is True
@@ -165,7 +167,7 @@ def test_read_skill_file_stays_inside_skill(tmp_path):
     assert "run.py" in read_skill_file(skills, "demo", "scripts")
     assert read_skill_file(skills, "demo", "../secret.txt").startswith("error")
     assert read_skill_file(skills, "missing").startswith("error: unknown skill")
-    assert "astrbot__astrbot_read_skill" in build_codex_skills_prompt(skills)
+    assert "tools.astrbot_read_skill" in build_codex_skills_prompt(skills)
 
 
 def test_read_skill_rejects_absolute_and_unc(tmp_path):

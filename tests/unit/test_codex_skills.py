@@ -39,7 +39,7 @@ def test_sandbox_skills_are_listed_with_their_sandbox_location():
     prompt = build_codex_skills_prompt([_skill("pdf")], in_sandbox=True)
 
     assert "- pdf: d (sandbox: /workspace/skills/pdf/SKILL.md)" in prompt
-    assert "tools.astrbot__astrbot_read_skill" in prompt
+    assert "tools.astrbot_read_skill" in prompt
 
 
 # ------------------------------------------------------------ sandbox reads

@@ -37,6 +37,7 @@ from ..base import AgentResponse, AgentState, BaseAgentRunner
 from .constants import (
     CODEX_RUNNER_TYPE,
     CODEX_THREAD_STATE_KEY,
+    CODEX_TOOL_NAMESPACE,
     DEFAULT_SYSTEM_PROMPT,
 )
 from .native import (
@@ -123,6 +124,10 @@ def engine_options(cfg: dict) -> JsonObject:
         # Deferred tools stay out of the prompt prefix; this names them, with
         # short descriptions, in history and appends loads and unloads.
         "features.code_mode.tool_catalog": True,
+        # AstrBot's tools by short names in code mode: `exec_command`,
+        # `<plugin>__<tool>` (just `<tool>` when it is named like its plugin);
+        # `astrbot_`/`codex_` prefixes only where a name clashes with Codex's.
+        "features.code_mode.host_namespace": CODEX_TOOL_NAMESPACE,
         # The persona and other standing context are sent once and then kept
         # by history; compaction drops them, so Codex puts them back. A long
         # persona must not lose its middle either. The budget counts 4 bytes
