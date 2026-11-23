@@ -13,7 +13,6 @@ from astrbot.core.agent.runners.tool_loop_agent_runner import (
 )
 from astrbot.core.agent.tool import FunctionTool
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor, call_local_llm_tool
-from astrbot.core.tools import tool_tasks
 
 
 @pytest.mark.asyncio
@@ -175,15 +174,8 @@ async def test_real_handler_stop_cancel_timeout_wait_for_cleanup(mode):
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(pending, 1)
             elif mode == "timeout":
-                # Not stopped: the model is reminded and the tool keeps
-                # running as a tool task until the model cancels it.
-                reminder = await asyncio.wait_for(pending, 1)
-                assert "still running" in reminder.content[0].text
-                assert closed == []
-                (entry,) = tool_tasks._tasks.values()
-                entry.task.cancel()
-                await asyncio.gather(entry.task, return_exceptions=True)
-                tool_tasks._tasks.clear()
+                with pytest.raises(Exception, match="execution timeout"):
+                    await asyncio.wait_for(pending, 1)
             else:
                 runner.request_stop()
                 with pytest.raises(_ToolExecutionInterrupted):

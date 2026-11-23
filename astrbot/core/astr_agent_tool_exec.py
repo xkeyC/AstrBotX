@@ -45,7 +45,11 @@ from astrbot.core.tools.computer_tools import (
     GrepTool,
 )
 from astrbot.core.tools.message_tools import SendMessageToUserTool
-from astrbot.core.tools.tool_tasks import register_tool_task, timeout_reminder
+from astrbot.core.tools.tool_tasks import (
+    TOOL_TASK_TOOL_NAME,
+    register_tool_task,
+    timeout_reminder,
+)
 from astrbot.core.utils.active_event_registry import active_event_registry
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.async_generator import iterate_in_task
@@ -481,7 +485,11 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         result_text = ""
         try:
             async for r in cls._execute_local(
-                tool, run_context, tool_call_timeout=3600, **tool_args
+                tool,
+                run_context,
+                tool_call_timeout=3600,
+                allow_tool_task=False,
+                **tool_args,
             ):
                 # collect results, currently we just collect the text results
                 if isinstance(r, mcp.types.CallToolResult):
@@ -675,11 +683,19 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         run_context: ContextWrapper[AstrAgentContext],
         *,
         tool_call_timeout: int | None = None,
+        allow_tool_task: bool = True,
         **tool_args,
     ):
         event = run_context.context.event
         if not event:
             raise ValueError("Event must be provided for local function tools.")
+        # Kept running past the timeout only where the model can manage it
+        # (the run offers astrbot_tool_task); elsewhere the timeout stops it.
+        hand_over_on_timeout = (
+            allow_tool_task
+            and getattr(run_context, "tool_tasks", False) is True
+            and tool.name != TOOL_TASK_TOOL_NAME
+        )
 
         is_override_call = False
         for ty in type(tool).mro():
@@ -778,8 +794,16 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                 finally:
                     if not getter.done():
                         getter.cancel()
-                if getter in done:
-                    kind, value = getter.result()
+                # The step may have finished just as the timeout fired: its
+                # result is then in the getter or still queued.
+                if getter.done() and not getter.cancelled():
+                    message: tuple[str, T.Any] | None = getter.result()
+                elif not responses.empty():
+                    message = responses.get_nowait()
+                else:
+                    message = None
+                if message is not None:
+                    kind, value = message
                     if kind == "item":
                         yield value
                         continue
@@ -790,9 +814,20 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                 if runner in done:
                     runner.result()
                     return
+                if not hand_over_on_timeout:
+                    runner.cancel()
+                    while not runner.done():
+                        with suppress(asyncio.CancelledError):
+                            await asyncio.wait({runner})
+                    raise Exception(
+                        f"tool {tool.name} execution timeout after "
+                        f"{effective_timeout} seconds.",
+                    )
                 # Still running after the timeout: keep it, remind the model.
                 handed_over = True
                 autonomous = True
+                # Wakes the tool's task if it is waiting for the next request.
+                requests.put_nowait("next")
                 entry = register_tool_task(
                     tool_name=tool.name,
                     umo=str(getattr(event, "unified_msg_origin", "")),

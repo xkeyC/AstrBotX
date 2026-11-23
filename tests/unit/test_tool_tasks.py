@@ -29,10 +29,11 @@ class _Event:
         return None
 
 
-def _ctx(event: _Event, timeout: int) -> ContextWrapper:
+def _ctx(event: _Event, timeout: float, *, tool_tasks: bool = True) -> ContextWrapper:
     return ContextWrapper(
         context=SimpleNamespace(event=event, context=SimpleNamespace()),
         tool_call_timeout=timeout,
+        tool_tasks=tool_tasks,
     )
 
 
@@ -185,4 +186,82 @@ async def test_a_caller_cancelled_before_the_timeout_stops_the_tool():
     with pytest.raises(asyncio.CancelledError):
         await call
     await asyncio.wait_for(stopped.wait(), 2)
+    assert not tool_tasks._tasks
+
+
+@pytest.mark.asyncio
+async def test_without_tool_tasks_the_timeout_still_stops_the_tool():
+    """A run that does not offer astrbot_tool_task (a plugin's tool loop, say)
+    keeps the old behaviour."""
+    stopped = asyncio.Event()
+
+    async def handler(event):
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            stopped.set()
+            raise
+
+    with pytest.raises(Exception, match="execution timeout"):
+        await _run(_tool(handler), _ctx(_Event(), timeout=1, tool_tasks=False))
+    assert stopped.is_set() and not tool_tasks._tasks
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_finished_task_gives_its_result():
+    release = asyncio.Event()
+
+    async def handler(event):
+        await release.wait()
+        return "done anyway"
+
+    event = _Event()
+    await _run(_tool(handler), _ctx(event, timeout=1))
+    (entry,) = tool_tasks._tasks.values()
+    release.set()
+    await asyncio.wait({entry.task}, timeout=2)
+    result = await ToolTaskTool().call(
+        _ctx(event, 10), task_id=entry.id, action="cancel"
+    )
+    assert _text(result) == "done anyway" and not tool_tasks._tasks
+
+
+@pytest.mark.asyncio
+async def test_waits_stay_under_a_small_timeout():
+    async def handler(event):
+        await asyncio.sleep(30)
+
+    event = _Event()
+    await _run(_tool(handler), _ctx(event, timeout=1))
+    (entry,) = tool_tasks._tasks.values()
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    result = await ToolTaskTool().call(
+        _ctx(event, 2), task_id=entry.id, action="wait", wait_seconds=60
+    )
+    assert loop.time() - start < 2 and "still running" in _text(result)
+
+
+@pytest.mark.asyncio
+async def test_a_step_finishing_at_the_timeout_is_not_lost(monkeypatch):
+    """The result queued as the timeout fires is delivered, not handed over."""
+    import astrbot.core.astr_agent_tool_exec as exec_mod
+
+    async def handler(event):
+        return "made it"
+
+    real_wait = asyncio.wait
+
+    async def late_wait(aws, *, timeout=None, return_when=asyncio.ALL_COMPLETED):
+        # Let the tool finish and queue its result, then report a timeout.
+        for _ in range(20):
+            await asyncio.sleep(0)
+        if timeout is not None:
+            return set(), set(aws)
+        return await real_wait(aws, timeout=timeout, return_when=return_when)
+
+    monkeypatch.setattr(exec_mod.asyncio, "wait", late_wait)
+    out = await _run(_tool(handler), _ctx(_Event(), timeout=1))
+    monkeypatch.setattr(exec_mod.asyncio, "wait", real_wait)
+    assert [_text(r) for r in out] == ["made it"]
     assert not tool_tasks._tasks

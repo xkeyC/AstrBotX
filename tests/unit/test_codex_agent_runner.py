@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 from astrbot.core.agent.hooks import BaseAgentRunHooks
@@ -778,3 +779,47 @@ def test_releasing_a_thread_unloads_it_and_forgets_its_context():
     asyncio.run(run())
     assert shut == ["old"]
     assert "additional_context" not in sent[-1]
+
+
+def test_a_sender_limited_to_some_tools_can_still_manage_tool_tasks():
+    """astrbot_tool_task only manages tools this chat started, so no tool rule
+    hides or refuses it, and its presence lets timed-out tools keep running."""
+    from astrbot.core.permission_rules import PermissionPolicy
+    from astrbot.core.tools.tool_tasks import ToolTaskTool
+
+    tools = ToolSet([_tool("weather"), ToolTaskTool()])
+    only_weather = PermissionPolicy(rule_name="r", tools_allow=("weather",))
+    bridge = CodexToolBridge(tools, defer=True, policy=only_weather)
+    assert {spec["name"] for spec in bridge.specs} == {"weather", "astrbot_tool_task"}
+
+    event = SimpleNamespace(
+        get_result=lambda: None,
+        get_extra=lambda key: only_weather,
+        unified_msg_origin="qq:GroupMessage:1",
+    )
+    ctx = ContextWrapper(context=SimpleNamespace(event=event), tool_call_timeout=5)
+    result = asyncio.run(
+        bridge.call(
+            {
+                "namespace": "astrbot",
+                "tool": "astrbot_tool_task",
+                "arguments": {"task_id": "nope", "action": "status"},
+            },
+            ctx,
+            BaseAgentRunHooks(),
+        )
+    )
+    assert "permission denied" not in json.dumps(result)
+    assert "no tool task" in json.dumps(result)
+    assert ctx.tool_tasks is True
+
+    plain = CodexToolBridge(ToolSet([_tool("echo")]))
+    ctx2 = ContextWrapper(context=SimpleNamespace(event=event), tool_call_timeout=5)
+    asyncio.run(
+        plain.call(
+            {"namespace": "astrbot", "tool": "echo", "arguments": {"text": "x"}},
+            ctx2,
+            BaseAgentRunHooks(),
+        )
+    )
+    assert ctx2.tool_tasks is False

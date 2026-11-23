@@ -82,7 +82,19 @@ def register_tool_task(
     outputs: list[Any],
     delivered: int,
 ) -> ToolTask:
-    """Keep a still-running tool call as a task the model can come back to."""
+    """Keep a still-running tool call as a task the model can come back to.
+
+    Args:
+        tool_name: Name of the tool that outlived its timeout.
+        umo: The chat that started it; only that chat can reach the task.
+        started_at: When the tool call started (epoch seconds).
+        task: The asyncio task still running the tool.
+        outputs: The list the task keeps appending the tool's outputs to.
+        delivered: How many of ``outputs`` the model has already seen.
+
+    Returns:
+        The registered task.
+    """
     _purge()
     entry = ToolTask(
         id=uuid.uuid4().hex[:12],
@@ -107,6 +119,15 @@ def register_tool_task(
 
 
 def get_tool_task(task_id: str, umo: str) -> ToolTask | None:
+    """Find a tool task of one chat.
+
+    Args:
+        task_id: The id the timeout reminder named.
+        umo: The chat asking.
+
+    Returns:
+        The task, or None if it is unknown, collected, or another chat's.
+    """
     _purge()
     entry = _tasks.get(task_id)
     if entry is None or entry.umo != umo:
@@ -115,7 +136,15 @@ def get_tool_task(task_id: str, umo: str) -> ToolTask | None:
 
 
 def timeout_reminder(entry: ToolTask, timeout: float) -> str:
-    """What the model gets instead of a result when a tool outlives its timeout."""
+    """What the model gets instead of a result when a tool outlives its timeout.
+
+    Args:
+        entry: The task the tool now runs as.
+        timeout: The tool call timeout it outlived, in seconds.
+
+    Returns:
+        The reminder text, naming the task and how to manage it.
+    """
     return (
         f"Tool `{entry.tool_name}` is still running after {timeout:g} s. It was "
         f"not stopped: it keeps running in the background as task {entry.id}. "
@@ -199,6 +228,16 @@ class ToolTaskTool(FunctionTool[AstrAgentContext]):
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
     ) -> ToolExecResult:
+        """Wait for, check on, or cancel a tool task of the current chat.
+
+        Args:
+            context: Current agent execution context.
+            **kwargs: task_id, action ("wait", "status" or "cancel") and
+                optional wait_seconds.
+
+        Returns:
+            The task's result, its status, or what cancelling it did.
+        """
         event = context.context.event
         task_id = str(kwargs.get("task_id") or "").strip()
         action = str(kwargs.get("action") or "").strip()
@@ -219,21 +258,30 @@ class ToolTaskTool(FunctionTool[AstrAgentContext]):
                 f"Task {entry.id} ({entry.tool_name}) is still running "
                 f"({entry.elapsed():.0f} s so far)."
             )
+        # Every wait here stays under this call's own timeout.
+        timeout = float(context.tool_call_timeout)
+        cap = max(0.5, timeout - min(WAIT_MARGIN_SECONDS, timeout / 2))
         if action == "cancel":
+            if entry.done:
+                # Too late: it finished, so the result is what it did.
+                return _finished_result(entry)
+            entry.task.cancel()
+            await asyncio.wait({entry.task}, timeout=min(WAIT_MARGIN_SECONDS, cap))
             if not entry.done:
-                entry.task.cancel()
-                await asyncio.wait({entry.task}, timeout=WAIT_MARGIN_SECONDS)
+                return _text(
+                    f"Cancellation of task {entry.id} ({entry.tool_name}) was "
+                    "requested, but it has not stopped yet; check its status again."
+                )
             _tasks.pop(entry.id, None)
             return _text(f"Task {entry.id} ({entry.tool_name}) was cancelled.")
         if action != "wait":
             return _text(f"error: unknown action {action!r}.", error=True)
 
-        cap = max(1, int(context.tool_call_timeout) - WAIT_MARGIN_SECONDS)
         try:
-            wait_seconds = int(kwargs.get("wait_seconds") or cap)
+            wait_seconds = float(kwargs.get("wait_seconds") or cap)
         except (TypeError, ValueError):
             wait_seconds = cap
-        wait_seconds = max(1, min(wait_seconds, cap))
+        wait_seconds = max(0.5, min(wait_seconds, cap))
         if not entry.done:
             await asyncio.wait({entry.task}, timeout=wait_seconds)
         if entry.done:

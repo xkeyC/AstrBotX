@@ -22,6 +22,7 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.permission_rules import EVENT_EXTRA_KEY as POLICY_EXTRA_KEY
 from astrbot.core.permission_rules import PermissionPolicy, tool_mcp_server
+from astrbot.core.tools.tool_tasks import TOOL_TASK_TOOL_NAME
 
 from .constants import CODEX_TOOL_NAMESPACE
 
@@ -188,6 +189,7 @@ class CodexToolBridge:
             if (
                 defer
                 and policy is not None
+                and tool.name != TOOL_TASK_TOOL_NAME
                 and not policy.allows_tool(tool.name, tool_mcp_server(tool))
             ):
                 continue
@@ -261,8 +263,11 @@ class CodexToolBridge:
         event = getattr(getattr(run_context, "context", None), "event", None)
         get_extra = getattr(event, "get_extra", None)
         policy = get_extra(POLICY_EXTRA_KEY) if callable(get_extra) else None
-        if isinstance(policy, PermissionPolicy) and not policy.allows_tool(
-            tool.name, tool_mcp_server(tool)
+        # astrbot_tool_task only manages tools this chat already started.
+        if (
+            isinstance(policy, PermissionPolicy)
+            and tool.name != TOOL_TASK_TOOL_NAME
+            and not policy.allows_tool(tool.name, tool_mcp_server(tool))
         ):
             logger.info("Codex tool %s denied by rule %r", tool.name, policy.rule_name)
             return _text_result(
@@ -276,6 +281,11 @@ class CodexToolBridge:
         except Exception as e:  # noqa: BLE001
             logger.error("Error in on_tool_start hook: %s", e, exc_info=True)
 
+        # A tool outliving the timeout becomes a tool task only where the model
+        # can manage it: this request offers astrbot_tool_task.
+        run_context.tool_tasks = any(
+            t.name == TOOL_TASK_TOOL_NAME for t in self.tools.values()
+        )
         items: list[JsonObject] = []
         final: CallToolResult | None = None
         success = True
