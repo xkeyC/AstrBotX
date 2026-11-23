@@ -66,6 +66,11 @@ def test_response_format_matches_codex_shape():
     )
     assert "Process running with session ID abc123" in running
     assert "Process exited" not in running
+    # The model is told it went on in the background, and how to follow it.
+    assert "keeps running in the background" in running
+    assert 'write_stdin(session_id="abc123")' in running
+    assert "`wait` does not take it" in running
+    assert running.endswith("Output:\n")
 
 
 def test_long_output_is_truncated_in_the_middle():
@@ -135,6 +140,19 @@ def test_poll_script_waits_inside_the_sandbox():
     assert codex_exec.META_MARKER in script
     # Without a tmux session there is nothing to probe or clean up.
     assert "tmux" not in script
+
+
+def test_poll_script_waits_for_exit_not_for_the_first_output():
+    """Codex's semantics: new output alone does not end the wait, so a command
+    that prints a line and keeps working is not reported as running at once."""
+    script = _poll_script("/tmp/astrbot-exec/abc", 0, 10_000)
+    loop = script[script.index("while :;") : script.index("done;")]
+    assert '[ -f "$d/exit" ]' in loop and '-ge "$end"' in loop
+    assert "out.log" not in loop
+    # A pane that died ends the wait instead of sitting it out.
+    tmux = _poll_script("/tmp/astrbot-exec/abc", 0, 10_000, "abc")
+    tmux_loop = tmux[tmux.index("while :;") : tmux.index("done;")]
+    assert "tmux has-session -t abc 2>/dev/null || break" in tmux_loop
 
 
 def test_poll_script_probes_a_tmux_pane_that_died_without_an_exit_code():

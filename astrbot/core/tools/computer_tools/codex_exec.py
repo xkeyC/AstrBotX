@@ -1,8 +1,9 @@
 """Codex-style ``exec_command`` / ``write_stdin`` over AstrBot's runtimes.
 
 Codex models are trained on this pair: a command runs in a session, the call
-yields after ``yield_time_ms`` with whatever output arrived so far, and a
-session id lets the model keep reading or send input. That beats one-shot
+returns when the command exits or, at the latest, after ``yield_time_ms`` with
+whatever output arrived so far, and a session id lets the model keep reading
+or send input. That beats one-shot
 execution for anything interactive or slow (installers, REPLs, servers, test
 watchers), so these replace the plain shell tools when Codex drives the turn.
 
@@ -116,10 +117,24 @@ def format_exec_response(
         sections.append(f"Process exited with code {exit_code}")
     if session_id is not None:
         sections.append(f"Process running with session ID {session_id}")
+        sections.append(running_note(session_id))
     if truncated:
         sections.append(f"Original token count: {original_tokens}")
     sections.append("Output:")
     return "\n".join(sections) + "\n" + text
+
+
+def running_note(session_id: str) -> str:
+    """Tells the model a command went on in the background, and how to follow it."""
+    return (
+        f"The command did not finish within the wait: it keeps running in the "
+        f"background (not stopped) as session {session_id}. To read more of its "
+        f'output or send input, call write_stdin(session_id="{session_id}"). If it '
+        "will take a while, do not keep polling: say what is running and end your "
+        "turn; its exit code and output come back to you as a message when it "
+        f"finishes (it is stopped after {WATCH_MAX_SECONDS // 60} minutes). This "
+        "is a shell session ID, not a code-mode cell ID: `wait` does not take it."
+    )
 
 
 def clamp_yield_time(value: Any, default: int = DEFAULT_YIELD_TIME_MS) -> int:
@@ -379,7 +394,12 @@ async def _deliver(target: _WatchTarget, exit_code: int, output: str) -> None:
 def _poll_script(
     directory: str, cursor: int, yield_ms: int, tmux_session: str | None = None
 ) -> str:
-    """Wait inside the sandbox for new output or exit, then report both.
+    """Wait inside the sandbox until the command exits or ``yield_ms`` passes.
+
+    New output alone does not end the wait (Codex's own exec tools behave the
+    same way): a command that prints a line and goes on working would
+    otherwise come back as "running" at once, and the model would pile up
+    more commands next to it instead of letting it finish.
 
     The wait happens in the sandbox so one poll costs one round trip. The
     trailing metadata line carries the log size and exit code.
@@ -387,7 +407,7 @@ def _poll_script(
     Args:
         directory: Session directory holding ``out.log`` and ``exit``.
         cursor: Byte offset already reported to the model.
-        yield_ms: How long to wait for new output before giving up.
+        yield_ms: How long to wait for the command to exit.
         tmux_session: tmux session name when the command runs in a pane. It
             adds a liveness probe, because a pane that died without writing an
             exit code -- killed, signalled with Ctrl-C, or lost with the tmux
@@ -397,8 +417,10 @@ def _poll_script(
         A shell script to run in the sandbox.
     """
     seconds = (max(0, yield_ms) + 999) // 1000
-    probe = cleanup = ""
+    probe = cleanup = alive = ""
     if tmux_session:
+        # A pane that is gone will never write its exit code: stop waiting.
+        alive = f"tmux has-session -t {tmux_session} 2>/dev/null || break; "
         probe = (
             '[ -f "$d/exit" ] || tmux has-session -t '
             f"{tmux_session} 2>/dev/null || "
@@ -413,10 +435,10 @@ def _poll_script(
         f"d={shlex.quote(directory)}; c={cursor}; "
         f"end=$(( $(date +%s) + {seconds} )); "
         "while :; do "
-        'size=$(wc -c < "$d/out.log" 2>/dev/null || echo 0); size=$((size + 0)); '
-        '{ [ -f "$d/exit" ] || [ "$size" -gt "$c" ] || '
-        '[ "$(date +%s)" -ge "$end" ]; } && break; '
-        "sleep 0.2; done; " + probe + 'tail -c +$((c + 1)) "$d/out.log" 2>/dev/null; '
+        '{ [ -f "$d/exit" ] || [ "$(date +%s)" -ge "$end" ]; } && break; '
+        + alive
+        + "sleep 0.2; done; "
+        + probe + 'tail -c +$((c + 1)) "$d/out.log" 2>/dev/null; '
         f'printf "\\n{META_MARKER} %s %s>>>\\n" '
         '"$(( $(wc -c < "$d/out.log" 2>/dev/null || echo 0) + 0 ))" '
         '"$(cat "$d/exit" 2>/dev/null || echo none)"' + cleanup
@@ -569,13 +591,18 @@ def _write_stdin_script(session: SandboxSession, chars: str) -> str:
 class ExecCommandTool(FunctionTool):
     name: str = "exec_command"
     description: str = (
-        "Runs a command in a shell session, returning output or a session ID for "
-        "ongoing interaction. Use write_stdin to keep reading or to answer prompts. "
-        "A session ID means the command is still running. Poll it with write_stdin "
-        "when it should be done in seconds. For anything slower, do not hold up the "
-        "conversation: say what you started, end your turn, and the result comes "
-        "back to you as a message when the command finishes. Never idle with sleep "
-        "or repeated empty polls to keep a turn alive."
+        "Runs a command in a shell session. Returns when the command exits, or "
+        "after yield_time_ms at the latest: a command still running then keeps "
+        "running in the background, and the result says so and gives its session "
+        "ID. Use write_stdin with that session ID to keep reading or to answer "
+        "prompts; it is a shell session ID, not a code-mode cell ID (`wait` does "
+        "not take it). Poll it when it should be done in seconds. For anything "
+        "slower, do not hold up the conversation: say what you started, end your "
+        "turn, and the result comes back to you as a message when the command "
+        "finishes. Never idle with sleep or repeated empty polls to keep a turn "
+        "alive, and do not start the same work again while it runs. Avoid "
+        "downloading or cloning large repositories or archives (the Linux kernel, "
+        "nixpkgs); look things up through web pages or APIs instead."
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -589,7 +616,8 @@ class ExecCommandTool(FunctionTool):
                 "yield_time_ms": {
                     "type": "number",
                     "description": (
-                        "Wait before yielding output. Defaults to 10000 ms; "
+                        "How long to wait for the command to exit before "
+                        "returning with its session ID. Defaults to 10000 ms; "
                         "effective range is 250-30000 ms. Commands that finish "
                         "sooner return immediately."
                     ),
@@ -671,8 +699,10 @@ class ExecCommandTool(FunctionTool):
 class WriteStdinTool(FunctionTool):
     name: str = "write_stdin"
     description: str = (
-        "Writes characters to an existing exec_command session and returns recent "
-        "output. Pass empty chars to poll a running command without writing."
+        "Writes characters to a running exec_command session (by the session ID "
+        "exec_command reported) and returns its new output. Pass empty chars to "
+        "poll without writing. Returns when the command exits or after "
+        "yield_time_ms. Session IDs only: a code-mode cell ID goes to `wait`."
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -691,7 +721,7 @@ class WriteStdinTool(FunctionTool):
                 },
                 "yield_time_ms": {
                     "type": "number",
-                    "description": "Wait before yielding output. Defaults to 5000 ms, capped at 30000 ms.",
+                    "description": "How long to wait for the command to exit before returning. Defaults to 5000 ms, capped at 30000 ms.",
                 },
                 "max_output_tokens": {
                     "type": "number",

@@ -768,7 +768,7 @@ async def test_forgetting_a_thread_drops_its_image_handler():
 
 def test_the_prompt_tells_the_model_how_to_read_an_image_result():
     """系统提示要说明生图结果没有 content，否则模型遍历不到内容，以为没生成。"""
-    prompt = runner_mod.DEFAULT_SYSTEM_PROMPT
+    prompt = runner_mod.system_prompt({})
     assert "`generatedImage(result)`" in prompt
     assert '"yield_time_ms": 120000' in prompt
     assert "`wait`" in prompt

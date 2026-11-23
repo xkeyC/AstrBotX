@@ -38,6 +38,7 @@ from .constants import (
     CODEX_RUNNER_TYPE,
     CODEX_THREAD_STATE_KEY,
     CODEX_TOOL_NAMESPACE,
+    CODE_MODE_TOOLS_PROMPT,
     DEFAULT_SYSTEM_PROMPT,
 )
 from .native import (
@@ -379,8 +380,14 @@ def memory_thread_config(cfg: dict, umo: str, event: T.Any) -> JsonObject:
 
 
 def system_prompt(cfg: dict) -> str:
+    """The thread's base instructions: the operator's own prompt or the default
+    one, and in code mode the guide to calling and orchestrating tools from
+    code, which a custom prompt does not replace."""
     custom = str(cfg.get("base_instructions") or "").strip()
-    return custom or DEFAULT_SYSTEM_PROMPT
+    prompt = custom or DEFAULT_SYSTEM_PROMPT.rstrip()
+    if (cfg.get("tool_mode") or "code_mode_only") in CODE_MODES:
+        prompt = f"{prompt}\n\n{CODE_MODE_TOOLS_PROMPT}"
+    return prompt
 
 
 # Codex saves a generated image under CODEX_HOME, on the host and outside every
