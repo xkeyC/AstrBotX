@@ -40,7 +40,7 @@
         "sync_history": {"description": "Mirror Conversation History", "hint": "Copy exchanges into AstrBot history for display only; the Codex thread keeps the real context."},
         "memory_enabled": {"description": "Enable Codex Memories", "hint": "Each chat gets its own memories; only private chats of users granted global memory may write to the shared store, group chats stay local."},
         "memory_auto_consolidate": {"description": "Consolidate Memories Periodically", "hint": "When off, only immediate notes are kept and nothing is consolidated in the background (consolidation needs the codex executable)."},
-        "tool_call_timeout": {"description": "Tool Call Timeout (seconds)", "hint": "A tool running longer than this is not stopped: it keeps running in the background, and the model is reminded and decides whether to wait for its result or cancel it (astrbot_tool_task)."},
+        "tool_call_timeout": {"description": "Tool Call Timeout (seconds)", "hint": "In a Codex chat, a local plugin tool running longer than this is not stopped: it keeps running in the background, and the model is reminded and decides whether to wait for its result or cancel it (astrbot_tool_task). MCP tools, and tools in a plugin's own LLM calls, are still stopped at the timeout."},
         "turn_timeout": {"description": "Turn Timeout (seconds)"}
       } }
     },

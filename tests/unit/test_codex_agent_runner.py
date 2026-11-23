@@ -330,7 +330,7 @@ def test_open_model_providers_get_the_open_model_options(tmp_path):
     cfg = opts["config"]
     assert cfg["model_provider_options.ds.open_model"] is True
     notice = cfg["model_provider_options.ds.open_model_switch_notice"]
-    assert "get_group_message_history" in notice and "encrypted" in notice
+    assert "message history" in notice and "encrypted" in notice
     for pid in ("oa", "x"):
         assert f"model_provider_options.{pid}.open_model" not in cfg
         assert f"model_provider_options.{pid}.open_model_switch_notice" not in cfg

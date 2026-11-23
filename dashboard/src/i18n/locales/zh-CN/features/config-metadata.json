@@ -40,7 +40,7 @@
         "sync_history": {"description": "同步对话记录", "hint": "把问答镜像到 AstrBot 对话历史，仅供展示；上下文由 Codex 线程维护。"},
         "memory_enabled": {"description": "启用 Codex 记忆", "hint": "每个会话有独立记忆；仅拥有全局记忆权限用户的私聊可写入全局记忆，群聊只写本会话。"},
         "memory_auto_consolidate": {"description": "周期性沉淀记忆", "hint": "关闭后仅保留即时写入的记忆，不再后台整理（整理需要 codex 可执行文件）。"},
-        "tool_call_timeout": {"description": "工具调用超时（秒）", "hint": "工具运行超过这个时间不会被停止：它转到后台继续运行，模型收到提醒，自行决定等待结果还是取消（astrbot_tool_task）。"},
+        "tool_call_timeout": {"description": "工具调用超时（秒）", "hint": "Codex 对话中，本地插件工具运行超过这个时间不会被停止：它转到后台继续运行，模型收到提醒，自行决定等待结果还是取消（astrbot_tool_task）。MCP 工具和插件自己发起的 LLM 调用里的工具，仍在超时后停止。"},
         "turn_timeout": {"description": "单轮超时（秒）"}
       } }
     },

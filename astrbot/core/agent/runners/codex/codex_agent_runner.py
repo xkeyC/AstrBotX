@@ -188,14 +188,14 @@ FILES_API_EXPIRES_SECONDS = 86400
 
 
 # Told once to an open-weight model taking over a conversation whose earlier
-# history it cannot read. Group chats can look history up; private chats have
-# their own history in the thread.
+# history it cannot read. Names no tool: a history tool is offered only where
+# it is enabled (group chats with persisted group history).
 OPEN_MODEL_SWITCH_NOTICE = (
     "Note: the model serving this conversation was switched. Part of the "
     "earlier history was produced by the previous model in an encrypted form "
     "that you cannot read, so some earlier context and summaries may be "
     "missing. If you need earlier context, look it up in the message history "
-    "(in a group chat, with get_group_message_history) instead of guessing."
+    "with a message history tool if you have one, or ask, instead of guessing."
 )
 
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import mcp
@@ -22,6 +22,8 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.core.permission_rules import EVENT_EXTRA_KEY as POLICY_EXTRA_KEY
+from astrbot.core.permission_rules import PermissionPolicy
 
 from .registry import builtin_tool
 
@@ -49,8 +51,10 @@ class ToolTask:
     # Outputs before this index were already given to the model.
     delivered: int = 0
     finished_at: float | None = None
-    error: BaseException | None = None
-    cancelled: bool = field(default=False)
+    # Who started it, and the started tool's MCP server: another sender of
+    # the chat needs permission for that tool to collect or cancel it.
+    sender_id: str = ""
+    mcp_server: str | None = None
 
     @property
     def done(self) -> bool:
@@ -81,6 +85,8 @@ def register_tool_task(
     task: asyncio.Task,
     outputs: list[Any],
     delivered: int,
+    sender_id: str = "",
+    mcp_server: str | None = None,
 ) -> ToolTask:
     """Keep a still-running tool call as a task the model can come back to.
 
@@ -91,6 +97,8 @@ def register_tool_task(
         task: The asyncio task still running the tool.
         outputs: The list the task keeps appending the tool's outputs to.
         delivered: How many of ``outputs`` the model has already seen.
+        sender_id: Who started it; another sender needs the tool's permission.
+        mcp_server: The MCP server of the tool, for that permission check.
 
     Returns:
         The registered task.
@@ -104,14 +112,12 @@ def register_tool_task(
         task=task,
         outputs=outputs,
         delivered=delivered,
+        sender_id=sender_id,
+        mcp_server=mcp_server,
     )
 
     def _finished(t: asyncio.Task) -> None:
         entry.finished_at = time.time()
-        if t.cancelled():
-            entry.cancelled = True
-        elif (exc := t.exception()) is not None:
-            entry.error = exc
 
     task.add_done_callback(_finished)
     _tasks[entry.id] = entry
@@ -181,12 +187,13 @@ def _text(text: str, *, error: bool = False) -> mcp.types.CallToolResult:
 
 def _finished_result(entry: ToolTask) -> mcp.types.CallToolResult:
     _tasks.pop(entry.id, None)
-    if entry.cancelled:
+    # Read from the task itself: its done callback may not have run yet.
+    if entry.task.cancelled():
         return _text(f"Task {entry.id} ({entry.tool_name}) was cancelled.", error=True)
-    if entry.error is not None:
+    if (error := entry.task.exception()) is not None:
         return _text(
             f"Task {entry.id} ({entry.tool_name}) failed after "
-            f"{entry.elapsed():.0f} s: {entry.error}",
+            f"{entry.elapsed():.0f} s: {error}",
             error=True,
         )
     return _collect(entry)
@@ -248,6 +255,21 @@ class ToolTaskTool(FunctionTool[AstrAgentContext]):
                 "finished and been collected already).",
                 error=True,
             )
+        # In a shared chat, another sender may only manage a tool they may use.
+        get_extra = getattr(event, "get_extra", None)
+        policy = get_extra(POLICY_EXTRA_KEY) if callable(get_extra) else None
+        get_sender_id = getattr(event, "get_sender_id", None)
+        sender_id = str(get_sender_id() or "") if callable(get_sender_id) else ""
+        if (
+            isinstance(policy, PermissionPolicy)
+            and sender_id != entry.sender_id
+            and not policy.allows_tool(entry.tool_name, entry.mcp_server)
+        ):
+            return _text(
+                f"error: permission denied — this user may not use "
+                f"{entry.tool_name}, so cannot manage its task.",
+                error=True,
+            )
         if action == "status":
             if entry.done:
                 return _text(
@@ -278,11 +300,13 @@ class ToolTaskTool(FunctionTool[AstrAgentContext]):
             return _text(f"error: unknown action {action!r}.", error=True)
 
         try:
-            wait_seconds = float(kwargs.get("wait_seconds") or cap)
+            raw = kwargs.get("wait_seconds")
+            wait_seconds = cap if raw is None else float(raw)
         except (TypeError, ValueError):
             wait_seconds = cap
-        wait_seconds = max(0.5, min(wait_seconds, cap))
-        if not entry.done:
+        # 0 checks without waiting.
+        wait_seconds = max(0.0, min(wait_seconds, cap))
+        if not entry.done and wait_seconds > 0:
             await asyncio.wait({entry.task}, timeout=wait_seconds)
         if entry.done:
             return _finished_result(entry)

@@ -265,3 +265,90 @@ async def test_a_step_finishing_at_the_timeout_is_not_lost(monkeypatch):
     monkeypatch.setattr(exec_mod.asyncio, "wait", real_wait)
     assert [_text(r) for r in out] == ["made it"]
     assert not tool_tasks._tasks
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_during_timeout_cleanup_is_kept():
+    """/stop arriving while a timed-out tool cleans up stays a cancellation."""
+
+    async def handler(event):
+        try:
+            await asyncio.sleep(30)
+        finally:
+            await asyncio.sleep(1)
+
+    call = asyncio.create_task(
+        _run(_tool(handler), _ctx(_Event(), timeout=1, tool_tasks=False))
+    )
+    await asyncio.sleep(1.4)
+    call.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await call
+
+
+@pytest.mark.asyncio
+async def test_a_direct_result_is_sent_outside_the_timeout():
+    sent = []
+
+    async def send(chain):
+        await asyncio.sleep(1.2)
+        sent.append(chain)
+
+    event = _Event()
+    result = SimpleNamespace(chain=["image"], derive=lambda chain: SimpleNamespace())
+    event.get_result = lambda: result
+    event.send = send
+
+    async def handler(event):
+        return None
+
+    out = await _run(_tool(handler), _ctx(event, timeout=1, tool_tasks=False))
+    assert out == [None] and len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_another_sender_needs_the_tools_permission():
+    from astrbot.core.permission_rules import EVENT_EXTRA_KEY, PermissionPolicy
+
+    async def handler(event):
+        await asyncio.sleep(30)
+
+    starter = _Event()
+    starter.get_sender_id = lambda: "admin"
+    await _run(_tool(handler), _ctx(starter, timeout=1))
+    (entry,) = tool_tasks._tasks.values()
+    assert entry.sender_id == "admin"
+
+    member = _Event()
+    member.get_sender_id = lambda: "member"
+    member.set_extra(
+        EVENT_EXTRA_KEY, PermissionPolicy(rule_name="r", tools_deny=("research",))
+    )
+    denied = await ToolTaskTool().call(
+        _ctx(member, 10), task_id=entry.id, action="cancel"
+    )
+    assert denied.isError and "permission denied" in _text(denied) and not entry.done
+
+    starter.set_extra(
+        EVENT_EXTRA_KEY, PermissionPolicy(rule_name="r", tools_deny=("research",))
+    )
+    own = await ToolTaskTool().call(
+        _ctx(starter, 10), task_id=entry.id, action="status"
+    )
+    assert "still running" in _text(own)
+
+
+@pytest.mark.asyncio
+async def test_waiting_zero_seconds_only_checks():
+    async def handler(event):
+        await asyncio.sleep(30)
+
+    event = _Event()
+    await _run(_tool(handler), _ctx(event, timeout=1))
+    (entry,) = tool_tasks._tasks.values()
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    result = await ToolTaskTool().call(
+        _ctx(event, 120), task_id=entry.id, action="wait", wait_seconds=0
+    )
+    assert loop.time() - start < 0.5 and "still running" in _text(result)

@@ -29,6 +29,7 @@ from astrbot.core.message.message_event_result import (
     CommandResult,
     MessageEventResult,
 )
+from astrbot.core.permission_rules import tool_mcp_server
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.provider.entites import ProviderRequest
 from astrbot.core.provider.register import llm_tools
@@ -772,11 +773,12 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                             raise
                         responses.put_nowait(("error", e))
                         return
-                    out = await convert(resp)
                     if autonomous:
-                        outputs.append(out)
+                        outputs.append(await convert(resp))
                     else:
-                        responses.put_nowait(("item", out))
+                        # Converted (and a direct result sent) by the caller,
+                        # outside the timed wait, as before.
+                        responses.put_nowait(("item", resp))
 
         started_at = time.time()
         runner = asyncio.create_task(drive())
@@ -805,7 +807,7 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                 if message is not None:
                     kind, value = message
                     if kind == "item":
-                        yield value
+                        yield await convert(value)
                         continue
                     await runner
                     if kind == "error":
@@ -816,14 +818,22 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                     return
                 if not hand_over_on_timeout:
                     runner.cancel()
+                    cancelled = False
                     while not runner.done():
-                        with suppress(asyncio.CancelledError):
+                        try:
                             await asyncio.wait({runner})
+                        except asyncio.CancelledError:
+                            cancelled = True
+                    if cancelled:
+                        # The turn was cancelled meanwhile: that wins.
+                        raise asyncio.CancelledError
                     raise Exception(
                         f"tool {tool.name} execution timeout after "
                         f"{effective_timeout} seconds.",
                     )
                 # Still running after the timeout: keep it, remind the model.
+                get_sender_id = getattr(event, "get_sender_id", None)
+                starter = str(get_sender_id() or "") if callable(get_sender_id) else ""
                 handed_over = True
                 autonomous = True
                 # Wakes the tool's task if it is waiting for the next request.
@@ -835,6 +845,8 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                     task=runner,
                     outputs=outputs,
                     delivered=0,
+                    sender_id=starter,
+                    mcp_server=tool_mcp_server(tool),
                 )
                 if hasattr(event, "unified_msg_origin"):
                     # /stop cancels it like any background task.
