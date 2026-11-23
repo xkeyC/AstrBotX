@@ -276,8 +276,10 @@ class CodexChatProvider(Provider):
             "base_instructions": instructions or DEFAULT_INSTRUCTIONS,
             "dynamic_tools": bridge.dynamic_tools(),
             # Provider semantics: one function call per tool call, returned to
-            # the caller, so no code mode here.
-            "config": {"model_tool_mode": "direct"},
+            # the caller, so no code mode here. A plugin's call gets only the
+            # tools it passes: not OpenAI's hosted web search, which the
+            # runner's web_search setting turns on for chat threads.
+            "config": {"model_tool_mode": "direct", "web_search": "disabled"},
         }
         info = json.loads(await engine.rt.start_thread(json.dumps(params)))
         thread_id = info["thread_id"]

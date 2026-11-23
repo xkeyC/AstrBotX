@@ -120,6 +120,8 @@ def test_engine_options_default_to_lean_code_mode(tmp_path):
     cfg = opts["config"]
     assert cfg["model_tool_mode"] == "code_mode_only"
     assert cfg["features.shell_tool"] is False
+    # view_image reads the thread's environment, and threads have none.
+    assert cfg["features.view_image"] is False
     assert cfg["web_search"] == "disabled"
     assert cfg["include_permissions_instructions"] is False
     assert cfg["features.code_mode.structured_dynamic_tool_results"] is True
@@ -313,7 +315,11 @@ def test_open_model_providers_get_the_open_model_options(tmp_path):
             "codex_home": str(tmp_path),
             "tool_mode": "code_mode_only",
             "model_providers": [
-                {"id": "ds", "base_url": "https://api.deepseek.com", "open_model": True},
+                {
+                    "id": "ds",
+                    "base_url": "https://api.deepseek.com",
+                    "open_model": True,
+                },
                 {"id": "oa", "base_url": "https://api.openai.com/v1"},
                 # Only a real true turns it on.
                 {"id": "x", "base_url": "https://x/v1", "open_model": "yes"},

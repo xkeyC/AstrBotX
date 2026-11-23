@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+
+import pytest
+
 from astrbot.core.agent.message import AssistantMessageSegment, ToolCallMessageSegment
 from astrbot.core.agent.runners.codex.provider_adapter import (
     _tool_results,
@@ -53,3 +57,42 @@ def test_cron_and_background_prompts_quote_origin():
         {"tool_name": "render", "task_id": "1", "result": "done"}, "render my video"
     )
     assert "> render my video" in bg and "Result:\ndone" in bg
+
+
+@pytest.mark.asyncio
+async def test_plugin_threads_get_no_hosted_web_search(monkeypatch):
+    """A plugin's LLM call gets the tools it passes, not OpenAI's web search,
+    even when the runner turns it on for chat threads."""
+    import json
+
+    from astrbot.core.agent.runners.codex import provider_adapter
+
+    started = {}
+
+    class _Stop(Exception):
+        pass
+
+    class _Rt:
+        async def start_thread(self, params_json):
+            started.update(json.loads(params_json))
+            raise _Stop
+
+    provider = provider_adapter.make_codex_provider({"web_search": True})
+
+    async def engine():
+        return SimpleNamespace(rt=_Rt())
+
+    monkeypatch.setattr(provider, "_engine", engine)
+    with pytest.raises(_Stop):
+        await provider._start(
+            prompt="hi",
+            image_urls=[],
+            func_tool=None,
+            contexts=[],
+            system_prompt="",
+            extra_user_content_parts=[],
+            model=None,
+        )
+    assert started["config"]["web_search"] == "disabled"
+    assert started["config"]["model_tool_mode"] == "direct"
+    assert started["no_environment"] is True

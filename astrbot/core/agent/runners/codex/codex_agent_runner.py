@@ -112,6 +112,10 @@ def engine_options(cfg: dict) -> JsonObject:
         # supported in this fork: commands run in AstrBot's sandbox tools,
         # whose results AstrBot checks before the model sees them.
         "features.shell_tool": False,
+        # view_image reads the thread's execution environment, and threads
+        # have none (no_environment): it can neither open host files nor the
+        # sandbox's. Images in the sandbox are read with AstrBot's file tool.
+        "features.view_image": False,
         "web_search": "live" if cfg.get("web_search") else "disabled",
         "model_tool_mode": tool_mode,
         "features.code_mode.structured_dynamic_tool_results": True,
