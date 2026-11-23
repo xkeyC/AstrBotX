@@ -3467,6 +3467,7 @@ CONFIG_METADATA_3 = {
                     "agent_runner.config.tool_call_timeout": {
                         "description": "工具调用超时（秒）",
                         "type": "int",
+                        "hint": "工具运行超过这个时间不会被停止：它转到后台继续运行，模型收到提醒，自行决定等待结果还是取消（astrbot_tool_task）。",
                     },
                     "agent_runner.config.turn_timeout": {
                         "description": "单轮超时（秒）",

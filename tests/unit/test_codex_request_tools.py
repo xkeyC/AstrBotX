@@ -88,6 +88,7 @@ async def test_a_persona_listing_the_shell_keeps_codex_exec(monkeypatch):
         "exec_command",
         "write_stdin",
         "astrbot_file_read_tool",
+        "astrbot_tool_task",
     }
 
 
@@ -95,14 +96,14 @@ async def test_a_persona_listing_the_shell_keeps_codex_exec(monkeypatch):
 async def test_a_persona_without_the_shell_gets_no_codex_exec(monkeypatch):
     names = await _prepared_tools(monkeypatch, {"astrbot_file_read_tool"})
 
-    assert names == {"astrbot_file_read_tool"}
+    assert names == {"astrbot_file_read_tool", "astrbot_tool_task"}
 
 
 @pytest.mark.asyncio
 async def test_a_persona_listing_the_codex_names_keeps_them(monkeypatch):
     names = await _prepared_tools(monkeypatch, {"exec_command", "apply_patch"})
 
-    assert names == {"exec_command", "apply_patch"}
+    assert names == {"exec_command", "apply_patch", "astrbot_tool_task"}
 
 
 @pytest.mark.asyncio

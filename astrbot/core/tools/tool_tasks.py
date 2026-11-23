@@ -1,0 +1,244 @@
+"""Tool calls that outlive the tool call timeout.
+
+A tool still running when ``tool_call_timeout`` passes is not stopped: it keeps
+running as a *tool task*, and the model gets a reminder instead of a result.
+The model then decides, through :class:`ToolTaskTool`, whether to wait for the
+result, check on it, or cancel it. Tasks belong to the chat (``umo``) that
+started them and are dropped an hour after they finish if nobody collects them.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import Any
+
+import mcp
+from pydantic import Field
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+
+from astrbot.core.agent.run_context import ContextWrapper
+from astrbot.core.agent.tool import FunctionTool, ToolExecResult
+from astrbot.core.astr_agent_context import AstrAgentContext
+
+from .registry import builtin_tool
+
+TOOL_TASK_TOOL_NAME = "astrbot_tool_task"
+# Finished tasks nobody collected are forgotten after this long.
+FINISHED_TASK_TTL_SECONDS = 3600
+# A wait leaves this much of the tool call timeout for the call itself.
+WAIT_MARGIN_SECONDS = 5
+NO_RETURN_VALUE_TEXT = (
+    "The tool has no return value, or has sent the result directly to the user."
+)
+
+
+@dataclass
+class ToolTask:
+    """A tool call still running after its timeout."""
+
+    id: str
+    tool_name: str
+    umo: str
+    started_at: float
+    task: asyncio.Task
+    # What the tool produced (CallToolResult, or None for "nothing to return").
+    outputs: list[Any]
+    # Outputs before this index were already given to the model.
+    delivered: int = 0
+    finished_at: float | None = None
+    error: BaseException | None = None
+    cancelled: bool = field(default=False)
+
+    @property
+    def done(self) -> bool:
+        return self.task.done()
+
+    def elapsed(self) -> float:
+        return (self.finished_at or time.time()) - self.started_at
+
+
+_tasks: dict[str, ToolTask] = {}
+
+
+def _purge() -> None:
+    now = time.time()
+    for task_id, t in list(_tasks.items()):
+        if (
+            t.finished_at is not None
+            and now - t.finished_at > FINISHED_TASK_TTL_SECONDS
+        ):
+            _tasks.pop(task_id, None)
+
+
+def register_tool_task(
+    *,
+    tool_name: str,
+    umo: str,
+    started_at: float,
+    task: asyncio.Task,
+    outputs: list[Any],
+    delivered: int,
+) -> ToolTask:
+    """Keep a still-running tool call as a task the model can come back to."""
+    _purge()
+    entry = ToolTask(
+        id=uuid.uuid4().hex[:12],
+        tool_name=tool_name,
+        umo=umo,
+        started_at=started_at,
+        task=task,
+        outputs=outputs,
+        delivered=delivered,
+    )
+
+    def _finished(t: asyncio.Task) -> None:
+        entry.finished_at = time.time()
+        if t.cancelled():
+            entry.cancelled = True
+        elif (exc := t.exception()) is not None:
+            entry.error = exc
+
+    task.add_done_callback(_finished)
+    _tasks[entry.id] = entry
+    return entry
+
+
+def get_tool_task(task_id: str, umo: str) -> ToolTask | None:
+    _purge()
+    entry = _tasks.get(task_id)
+    if entry is None or entry.umo != umo:
+        return None
+    return entry
+
+
+def timeout_reminder(entry: ToolTask, timeout: float) -> str:
+    """What the model gets instead of a result when a tool outlives its timeout."""
+    return (
+        f"Tool `{entry.tool_name}` is still running after {timeout:g} s. It was "
+        f"not stopped: it keeps running in the background as task {entry.id}. "
+        f"Decide what to do with `{TOOL_TASK_TOOL_NAME}` "
+        f'(task_id="{entry.id}"): action "wait" to wait for its result, '
+        '"status" to check on it, or "cancel" to stop it. If it may take a '
+        "while, tell the user before waiting."
+    )
+
+
+def _collect(entry: ToolTask) -> mcp.types.CallToolResult:
+    """The outputs the model has not seen yet, as one result."""
+    content: list[Any] = []
+    is_error = False
+    for out in entry.outputs[entry.delivered :]:
+        if isinstance(out, mcp.types.CallToolResult):
+            content.extend(out.content)
+            is_error = is_error or bool(out.isError)
+        elif out is None:
+            content.append(
+                mcp.types.TextContent(type="text", text=NO_RETURN_VALUE_TEXT)
+            )
+    entry.delivered = len(entry.outputs)
+    if not content:
+        content.append(mcp.types.TextContent(type="text", text=NO_RETURN_VALUE_TEXT))
+    return mcp.types.CallToolResult(content=content, isError=is_error)
+
+
+def _text(text: str, *, error: bool = False) -> mcp.types.CallToolResult:
+    return mcp.types.CallToolResult(
+        content=[mcp.types.TextContent(type="text", text=text)], isError=error
+    )
+
+
+def _finished_result(entry: ToolTask) -> mcp.types.CallToolResult:
+    _tasks.pop(entry.id, None)
+    if entry.cancelled:
+        return _text(f"Task {entry.id} ({entry.tool_name}) was cancelled.", error=True)
+    if entry.error is not None:
+        return _text(
+            f"Task {entry.id} ({entry.tool_name}) failed after "
+            f"{entry.elapsed():.0f} s: {entry.error}",
+            error=True,
+        )
+    return _collect(entry)
+
+
+@builtin_tool
+@pydantic_dataclass
+class ToolTaskTool(FunctionTool[AstrAgentContext]):
+    name: str = TOOL_TASK_TOOL_NAME
+    description: str = (
+        "Manage a tool call that is still running after its timeout (the "
+        "timeout reminder names its task_id). action 'wait' waits up to "
+        "wait_seconds for its result and returns it; 'status' says whether it "
+        "is still running; 'cancel' stops it."
+    )
+    parameters: dict = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The task id from the timeout reminder.",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["wait", "status", "cancel"],
+                    "description": "wait for the result, check its status, or cancel it.",
+                },
+                "wait_seconds": {
+                    "type": "integer",
+                    "description": "How long 'wait' waits at most. Defaults to "
+                    "just under the tool call timeout, which also caps it.",
+                },
+            },
+            "required": ["task_id", "action"],
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
+        event = context.context.event
+        task_id = str(kwargs.get("task_id") or "").strip()
+        action = str(kwargs.get("action") or "").strip()
+        entry = get_tool_task(task_id, event.unified_msg_origin)
+        if entry is None:
+            return _text(
+                f"error: no tool task {task_id!r} in this chat (it may have "
+                "finished and been collected already).",
+                error=True,
+            )
+        if action == "status":
+            if entry.done:
+                return _text(
+                    f"Task {entry.id} ({entry.tool_name}) has finished after "
+                    f"{entry.elapsed():.0f} s; use action 'wait' to get its result."
+                )
+            return _text(
+                f"Task {entry.id} ({entry.tool_name}) is still running "
+                f"({entry.elapsed():.0f} s so far)."
+            )
+        if action == "cancel":
+            if not entry.done:
+                entry.task.cancel()
+                await asyncio.wait({entry.task}, timeout=WAIT_MARGIN_SECONDS)
+            _tasks.pop(entry.id, None)
+            return _text(f"Task {entry.id} ({entry.tool_name}) was cancelled.")
+        if action != "wait":
+            return _text(f"error: unknown action {action!r}.", error=True)
+
+        cap = max(1, int(context.tool_call_timeout) - WAIT_MARGIN_SECONDS)
+        try:
+            wait_seconds = int(kwargs.get("wait_seconds") or cap)
+        except (TypeError, ValueError):
+            wait_seconds = cap
+        wait_seconds = max(1, min(wait_seconds, cap))
+        if not entry.done:
+            await asyncio.wait({entry.task}, timeout=wait_seconds)
+        if entry.done:
+            return _finished_result(entry)
+        return _text(
+            f"Task {entry.id} ({entry.tool_name}) is still running after "
+            f"{entry.elapsed():.0f} s in total. Wait again, or cancel it."
+        )

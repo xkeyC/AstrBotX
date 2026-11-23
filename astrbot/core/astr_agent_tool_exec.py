@@ -1,12 +1,13 @@
 import asyncio
 import inspect
 import json
+import time
 import traceback
 import typing as T
 import uuid
 from collections.abc import Sequence
 from collections.abc import Set as AbstractSet
-from contextlib import aclosing
+from contextlib import aclosing, suppress
 
 import mcp
 
@@ -44,6 +45,7 @@ from astrbot.core.tools.computer_tools import (
     GrepTool,
 )
 from astrbot.core.tools.message_tools import SendMessageToUserTool
+from astrbot.core.tools.tool_tasks import register_tool_task, timeout_reminder
 from astrbot.core.utils.active_event_registry import active_event_registry
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.async_generator import iterate_in_task
@@ -710,44 +712,128 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
             method_name=method_name,
             **tool_args,
         )
-        async with aclosing(wrapper):
-            while True:
-                try:
-                    resp = await asyncio.wait_for(
-                        anext(wrapper),
-                        timeout=effective_timeout,
-                    )
-                    if resp is not None:
-                        if isinstance(resp, mcp.types.CallToolResult):
-                            yield resp
-                        else:
-                            text_content = mcp.types.TextContent(
-                                type="text",
-                                text=str(resp),
-                            )
-                            yield mcp.types.CallToolResult(content=[text_content])
+        # The tool runs in a task of its own, so that outliving the timeout
+        # does not stop it: it becomes a tool task, and the model is reminded
+        # and decides whether to wait for it or cancel it (tool_tasks). The
+        # task still advances the tool one step per item asked for, and runs
+        # every step and its cleanup itself, as the caller's task did before.
+        outputs: list[mcp.types.CallToolResult | None] = []
+        requests: asyncio.Queue[str] = asyncio.Queue()
+        responses: asyncio.Queue[tuple[str, T.Any]] = asyncio.Queue()
+        autonomous = False
+
+        async def convert(resp: T.Any) -> mcp.types.CallToolResult | None:
+            if resp is not None:
+                if isinstance(resp, mcp.types.CallToolResult):
+                    return resp
+                text_content = mcp.types.TextContent(type="text", text=str(resp))
+                return mcp.types.CallToolResult(content=[text_content])
+            # NOTE: Tool 在这里直接请求发送消息给用户
+            # TODO: 是否需要判断 event.get_result() 是否为空?
+            # 如果为空,则说明没有发送消息给用户,并且返回值为空,将返回一个特殊的 TextContent,其内容如"工具没有返回内容"
+            if res := run_context.context.event.get_result():
+                if res.chain:
+                    try:
+                        chain = res.derive(res.chain)
+                        chain.type = "tool_direct_result"
+                        await event.send(chain)
+                    except Exception as e:
+                        logger.error(f"Tool 直接发送消息失败: {e}", exc_info=True)
+            return None
+
+        async def drive() -> None:
+            async with aclosing(wrapper):
+                while True:
+                    if not autonomous and await requests.get() == "close":
+                        return
+                    try:
+                        resp = await anext(wrapper)
+                    except StopAsyncIteration:
+                        responses.put_nowait(("stop", None))
+                        return
+                    except Exception as e:  # noqa: BLE001 - handed to the caller
+                        if autonomous:
+                            raise
+                        responses.put_nowait(("error", e))
+                        return
+                    out = await convert(resp)
+                    if autonomous:
+                        outputs.append(out)
                     else:
-                        # NOTE: Tool 在这里直接请求发送消息给用户
-                        # TODO: 是否需要判断 event.get_result() 是否为空?
-                        # 如果为空,则说明没有发送消息给用户,并且返回值为空,将返回一个特殊的 TextContent,其内容如"工具没有返回内容"
-                        if res := run_context.context.event.get_result():
-                            if res.chain:
-                                try:
-                                    chain = res.derive(res.chain)
-                                    chain.type = "tool_direct_result"
-                                    await event.send(chain)
-                                except Exception as e:
-                                    logger.error(
-                                        f"Tool 直接发送消息失败: {e}",
-                                        exc_info=True,
-                                    )
-                        yield None
-                except asyncio.TimeoutError:
-                    raise Exception(
-                        f"tool {tool.name} execution timeout after {effective_timeout} seconds.",
+                        responses.put_nowait(("item", out))
+
+        started_at = time.time()
+        runner = asyncio.create_task(drive())
+        handed_over = False
+        try:
+            while True:
+                requests.put_nowait("next")
+                getter = asyncio.ensure_future(responses.get())
+                try:
+                    done, _ = await asyncio.wait(
+                        {getter, runner},
+                        timeout=effective_timeout,
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
-                except StopAsyncIteration:
-                    break
+                finally:
+                    if not getter.done():
+                        getter.cancel()
+                if getter in done:
+                    kind, value = getter.result()
+                    if kind == "item":
+                        yield value
+                        continue
+                    await runner
+                    if kind == "error":
+                        raise value
+                    return
+                if runner in done:
+                    runner.result()
+                    return
+                # Still running after the timeout: keep it, remind the model.
+                handed_over = True
+                autonomous = True
+                entry = register_tool_task(
+                    tool_name=tool.name,
+                    umo=str(getattr(event, "unified_msg_origin", "")),
+                    started_at=started_at,
+                    task=runner,
+                    outputs=outputs,
+                    delivered=0,
+                )
+                if hasattr(event, "unified_msg_origin"):
+                    # /stop cancels it like any background task.
+                    active_event_registry.register_background_task(event, runner)
+                logger.info(
+                    "Tool %s still running after %ss; kept as tool task %s.",
+                    tool.name,
+                    effective_timeout,
+                    entry.id,
+                )
+                yield mcp.types.CallToolResult(
+                    content=[
+                        mcp.types.TextContent(
+                            type="text",
+                            text=timeout_reminder(entry, effective_timeout),
+                        )
+                    ]
+                )
+                return
+        except asyncio.CancelledError:
+            # The turn was cancelled before the tool was handed over: the
+            # tool stops with it, as before.
+            if not handed_over and not runner.done():
+                runner.cancel()
+                # Repeated cancellation still waits for the tool's cleanup.
+                while not runner.done():
+                    with suppress(asyncio.CancelledError):
+                        await asyncio.wait({runner})
+            raise
+        finally:
+            if not handed_over and not runner.done():
+                # Closed between items: the tool's own task closes it.
+                requests.put_nowait("close")
+                await runner
 
     @classmethod
     async def _execute_mcp(

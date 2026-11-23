@@ -227,6 +227,12 @@ async def prepare_codex_request(
         req.func_tool.add_tool(tmgr.get_builtin_tool(GetGroupMessageHistoryTool))
 
     _filter_tools_by_persona_scope(event, req)
+    # Every request carries it, so the tool set stays the same: a tool that
+    # outlives the tool call timeout keeps running as a task, and the model
+    # waits for it or cancels it through this tool (tool_tasks).
+    from astrbot.core.tools.tool_tasks import ToolTaskTool
+
+    req.func_tool.add_tool(ToolTaskTool())
     # One reader for every runtime: it opens the host copy, or the sandbox copy
     # with the sandbox runtime, so the model never has to locate skill files
     # itself.
