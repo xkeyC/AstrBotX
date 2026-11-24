@@ -379,6 +379,28 @@ def memory_thread_config(cfg: dict, umo: str, event: T.Any) -> JsonObject:
     }
 
 
+#: Codex's retry and warning events: not part of the answer, but the only
+#: record of why a request is retried (HTTP status, disconnects, timeouts).
+_DIAGNOSTIC_EVENTS = ("stream_error", "warning", "stream_info")
+
+
+def _log_diagnostic(umo: str, thread_id: str, msg: JsonObject, elapsed: float) -> None:
+    """Logs a Codex retry or warning with the chat and turn it belongs to."""
+    info = msg.get("codex_error_info")
+    logger.warning(
+        "Codex %s: umo=%s thread=%s at %.0f s: %s%s%s",
+        msg.get("type"),
+        umo,
+        thread_id,
+        elapsed,
+        str(msg.get("message") or "")[:300],
+        f" | {json.dumps(info, ensure_ascii=False)[:200]}" if info else "",
+        f" | {str(msg.get('additional_details'))[:500]}"
+        if msg.get("additional_details")
+        else "",
+    )
+
+
 def system_prompt(cfg: dict) -> str:
     """The thread's base instructions: the operator's own prompt or the default
     one, and in code mode the guide to calling and orchestrating tools from
@@ -1276,17 +1298,33 @@ class CodexAgentRunner(BaseAgentRunner[TContext]):
                     keep_group_history(self._event())
                     keep_rate_limit_use(self._event())
                     await self._remember_accepted(thread_id, tools_update is not None)
+                    # What Codex last reported, for the log when the turn
+                    # runs out of time.
+                    last_event, last_event_at = "", time.monotonic()
                     while True:
                         remaining = timeout - (time.monotonic() - started)
                         if remaining <= 0:
                             await engine.interrupt(thread_id)
                             error_msg = f"Codex turn timed out after {timeout:.0f}s"
+                            logger.warning(
+                                "Codex turn timed out: umo=%s thread=%s, last event "
+                                "%r %.0f s before the timeout.",
+                                self.umo,
+                                thread_id,
+                                last_event or "(none since the turn started)",
+                                time.monotonic() - last_event_at,
+                            )
                             break
                         try:
                             msg = await asyncio.wait_for(queue.get(), remaining)
                         except asyncio.TimeoutError:
                             continue
                         kind = msg.get("type")
+                        if kind in _DIAGNOSTIC_EVENTS:
+                            _log_diagnostic(
+                                self.umo, thread_id, msg, time.monotonic() - started
+                            )
+                        last_event, last_event_at = str(kind), time.monotonic()
                         turn_of = msg.get(TURN_ID_FIELD)
                         if turn_of and active.turn_id and turn_of != active.turn_id:
                             # Another turn's (its end, words, images, usage): one
