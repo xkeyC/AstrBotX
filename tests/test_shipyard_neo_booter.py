@@ -424,3 +424,56 @@ class TestSandboxReuse:
         shutdown.assert_awaited_once_with()
         assert save.await_args.args[3] is booter
         computer_client.session_booter.pop("s-reuse", None)
+
+
+class TestTtlRenewal:
+    """Bay's TTL is a total lifetime; a sandbox in use is renewed to a full TTL
+    from now, so only one nobody uses expires (with its workspace)."""
+
+    def _booter(self, expires_in: float | None, ttl: int = 7 * 86400):
+        from datetime import datetime, timedelta
+
+        from astrbot.core.computer.booters.shipyard_neo import ShipyardNeoBooter
+
+        booter = ShipyardNeoBooter(
+            endpoint_url="http://localhost:8114", access_token="sk", ttl=ttl
+        )
+        # Bay returns naive UTC times.
+        expires_at = (
+            None
+            if expires_in is None
+            else datetime.utcnow() + timedelta(seconds=expires_in)
+        )
+        booter._sandbox = SimpleNamespace(
+            id="sandbox-x", expires_at=expires_at, extend_ttl=AsyncMock()
+        )
+        return booter
+
+    @pytest.mark.asyncio
+    async def test_a_used_sandbox_is_renewed_to_a_full_ttl(self):
+        booter = self._booter(expires_in=3 * 3600)
+        await booter.renew_ttl()
+        (extend_by,), _ = booter._sandbox.extend_ttl.call_args
+        assert abs(extend_by - (7 * 86400 - 3 * 3600)) < 5
+        # Within the hour it is not asked again.
+        await booter.renew_ttl()
+        booter._sandbox.extend_ttl.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_fresh_or_ttl_less_sandbox_is_left_alone(self):
+        for booter in (
+            self._booter(expires_in=7 * 86400 - 60),
+            self._booter(expires_in=None),
+            self._booter(expires_in=3600, ttl=0),
+            self._booter(expires_in=-10),
+        ):
+            await booter.renew_ttl()
+            booter._sandbox.extend_ttl.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_renewal_is_tried_again_on_the_next_use(self):
+        booter = self._booter(expires_in=86400)
+        booter._sandbox.extend_ttl.side_effect = [RuntimeError("bay down"), None]
+        await booter.renew_ttl()
+        await booter.renew_ttl()
+        assert booter._sandbox.extend_ttl.await_count == 2

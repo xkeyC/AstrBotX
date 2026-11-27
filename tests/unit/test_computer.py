@@ -596,6 +596,29 @@ class TestComputerClient:
         computer_client.session_booter.clear()
 
     @pytest.mark.asyncio
+    async def test_every_use_renews_the_sandbox_ttl(self):
+        """get_booter is each tool's way in: it keeps the sandbox alive."""
+        from astrbot.core.computer import computer_client
+
+        computer_client.session_booter.clear()
+        mock_context = MagicMock()
+        mock_config = MagicMock()
+        mock_config.get = lambda key, default=None: {
+            "provider_settings": {
+                "computer_use_runtime": "sandbox",
+                "sandbox": {"booter": "shipyard"},
+            }
+        }.get(key, default)
+        mock_context.get_config = MagicMock(return_value=mock_config)
+        booter = MagicMock()
+        booter.available = AsyncMock(return_value=True)
+        booter.renew_ttl = AsyncMock()
+        computer_client.session_booter["s"] = booter
+        assert await computer_client.get_booter(mock_context, "s") is booter
+        booter.renew_ttl.assert_awaited_once()
+        computer_client.session_booter.clear()
+
+    @pytest.mark.asyncio
     async def test_get_booter_rebuild_unavailable(self):
         """Test get_booter rebuilds when existing booter is unavailable."""
         from astrbot.core.computer import computer_client

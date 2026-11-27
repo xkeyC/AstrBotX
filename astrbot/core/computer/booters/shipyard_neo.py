@@ -4,6 +4,8 @@ import asyncio
 import os
 import re
 import shlex
+import time
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from astrbot.api import logger
@@ -343,6 +345,9 @@ class NeoBrowserComponent(BrowserComponent):
 #: and a shell, and the limit is part of the Bay profile, not anything AstrBot
 #: can set on a sandbox it creates.
 RECOMMENDED_NPROC = 1024
+# A sandbox in use has its TTL renewed at most this often, so its expiry
+# stays within this of a full TTL after its last use.
+TTL_RENEW_INTERVAL_SECONDS = 3600
 
 
 def _quantity(value: Any) -> float:
@@ -410,6 +415,7 @@ class ShipyardNeoBooter(ComputerBooter):
         self._python: PythonComponent | None = None
         self._shell: ShellComponent | None = None
         self._browser: BrowserComponent | None = None
+        self._ttl_renewed_at = float("-inf")
 
     @property
     def bay_client(self) -> Any:
@@ -822,6 +828,45 @@ class ShipyardNeoBooter(ComputerBooter):
             "[Computer] File downloaded from Neo sandbox: %s -> %s",
             remote_path,
             local_path,
+        )
+
+    async def renew_ttl(self) -> None:
+        """Keeps a sandbox in use alive: its TTL counts from the last use.
+
+        Bay deletes a sandbox, and its workspace with it, when its TTL from
+        creation runs out, however busy it is; activity only renews the idle
+        timeout. A chat's files would be lost every TTL. So each use (at most
+        hourly) moves the expiry to a full TTL from now: the TTL is no longer a
+        total lifetime, only how long a sandbox nobody uses is kept.
+        """
+        if self._sandbox is None or not self._ttl or self._ttl <= 0:
+            return
+        now = time.monotonic()
+        if now - self._ttl_renewed_at < TTL_RENEW_INTERVAL_SECONDS:
+            return
+        self._ttl_renewed_at = now
+        expires_at = getattr(self._sandbox, "expires_at", None)
+        if not isinstance(expires_at, datetime):
+            return  # no TTL
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        left = (expires_at - datetime.now(timezone.utc)).total_seconds()
+        if left <= 0 or left > self._ttl - TTL_RENEW_INTERVAL_SECONDS:
+            return
+        try:
+            # Bay extends from max(expiry, now): this ends a full TTL from now.
+            await self._sandbox.extend_ttl(int(self._ttl - left))
+        except Exception as e:  # noqa: BLE001 - retried on a later use
+            self._ttl_renewed_at = float("-inf")
+            logger.warning(
+                "[Computer] Could not renew sandbox %s TTL: %s", self.sandbox_id, e
+            )
+            return
+        logger.info(
+            "[Computer] Renewed sandbox %s TTL: %.1f days were left, now %.1f",
+            self.sandbox_id,
+            left / 86400,
+            self._ttl / 86400,
         )
 
     async def available(self) -> bool:

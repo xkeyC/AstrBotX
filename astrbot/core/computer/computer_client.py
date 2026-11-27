@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import os
 import shutil
@@ -746,6 +747,10 @@ async def get_booter(
             await _save_sandbox_binding(session_id, booter_type, sandbox_cfg, client)
         if booter_type == "cua":
             _schedule_cua_idle_cleanup(session_id, cua_idle_timeout)
+        # Every use keeps a Shipyard Neo sandbox (and its workspace) alive.
+        renew_ttl = getattr(session_booter[session_id], "renew_ttl", None)
+        if inspect.iscoroutinefunction(renew_ttl):
+            await renew_ttl()
         return session_booter[session_id]
 
 
