@@ -401,3 +401,82 @@ async def run_background_exec_completion(
                 f"后台命令已结束（会话 {session_id}，退出码 {exit_code}）"
             ),
         )
+
+
+# A tool task's result is cut to this many characters in the message.
+TOOL_TASK_RESULT_CHARS = 20_000
+
+
+def build_tool_task_prompt(
+    task_id: str, tool_name: str, elapsed: float, result: str, *, failed: bool
+) -> str:
+    """Prompt announcing a tool task that finished while nobody waited for it."""
+    lines = [
+        f'<tool_task_finished task_id="{task_id}" tool="{tool_name}" '
+        f'seconds="{elapsed:.0f}" status="{"failed" if failed else "done"}">',
+        "A tool you called earlier kept running as a task after its time limit and "
+        "has now finished; nobody was waiting for it, so this is how its result "
+        "reaches you. Tell the user what it found or what went wrong, in your own "
+        "voice, and act on it if the situation calls for it. Do not call the tool "
+        "again for the same thing.",
+        "Result:",
+        result.strip() or "(no output)",
+        "</tool_task_finished>",
+    ]
+    return "\n".join(lines)
+
+
+async def run_tool_task_completion(
+    ctx: Any,
+    *,
+    session_str: str,
+    sender_id: str,
+    role: str,
+    group_id: str,
+    task_id: str,
+    tool_name: str,
+    elapsed: float,
+    result: Any,
+) -> None:
+    """Delivers a finished tool task into its own chat.
+
+    It arrives as a message from whoever called the tool, like a finished
+    background command: steered into their running turn, or queued behind
+    whatever else that chat is doing.
+
+    Args:
+        result: The task's ``mcp.types.CallToolResult``; its text items are
+            sent, images are only mentioned.
+    """
+    parts: list[str] = []
+    for item in getattr(result, "content", None) or []:
+        text = getattr(item, "text", None)
+        if isinstance(text, str):
+            parts.append(text)
+        else:
+            parts.append(f"[{getattr(item, 'type', 'item')} omitted]")
+    text = "\n".join(parts)
+    if len(text) > TOOL_TASK_RESULT_CHARS:
+        text = text[:TOOL_TASK_RESULT_CHARS] + "\n…(truncated)"
+    # As a tool's result: the text reaches the model inside the prompt.
+    text = await content_moderation.filter_tool_text(
+        text,
+        content_moderation.platform_mode(session_str.split(":", 1)[0]),
+        label=f"tool task {task_id}",
+    )
+    prompt = build_tool_task_prompt(
+        task_id,
+        tool_name,
+        elapsed,
+        text,
+        failed=bool(getattr(result, "isError", False)),
+    )
+    if not await deliver_chat_event(
+        ctx,
+        session_str=session_str,
+        sender_id=sender_id,
+        role=role,
+        group_id=group_id,
+        prompt=prompt,
+    ):
+        logger.warning("Tool task %s produced no reply", task_id)

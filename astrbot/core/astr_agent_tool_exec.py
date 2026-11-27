@@ -838,15 +838,41 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                 autonomous = True
                 # Wakes the tool's task if it is waiting for the next request.
                 requests.put_nowait("next")
+                umo = str(getattr(event, "unified_msg_origin", ""))
+                plugin_context = run_context.context.context
+                get_group_id = getattr(event, "get_group_id", None)
+                group_id = str(get_group_id() or "") if callable(get_group_id) else ""
+                role = str(getattr(event, "role", "") or "member")
+
+                async def report(entry, result) -> None:
+                    # Nobody waited for it: the result reaches the model as a
+                    # message from whoever called the tool.
+                    from astrbot.core.agent.runners.codex.wake import (
+                        run_tool_task_completion,
+                    )
+
+                    await run_tool_task_completion(
+                        plugin_context,
+                        session_str=umo,
+                        sender_id=starter,
+                        role=role,
+                        group_id=group_id,
+                        task_id=entry.id,
+                        tool_name=entry.tool_name,
+                        elapsed=entry.elapsed(),
+                        result=result,
+                    )
+
                 entry = register_tool_task(
                     tool_name=tool.name,
-                    umo=str(getattr(event, "unified_msg_origin", "")),
+                    umo=umo,
                     started_at=started_at,
                     task=runner,
                     outputs=outputs,
                     delivered=0,
                     sender_id=starter,
                     mcp_server=tool_mcp_server(tool),
+                    on_unclaimed=report if umo else None,
                 )
                 if hasattr(event, "unified_msg_origin"):
                     # /stop cancels it like any background task.

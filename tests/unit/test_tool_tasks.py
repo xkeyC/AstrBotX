@@ -352,3 +352,113 @@ async def test_waiting_zero_seconds_only_checks():
         _ctx(event, 120), task_id=entry.id, action="wait", wait_seconds=0
     )
     assert loop.time() - start < 0.5 and "still running" in _text(result)
+
+
+@pytest.fixture
+def reports(monkeypatch):
+    """What finished tasks nobody waited for sent to their chat."""
+    sent: list[dict] = []
+
+    async def fake_completion(ctx, **kwargs):
+        sent.append(kwargs)
+
+    from astrbot.core.agent.runners.codex import wake
+
+    monkeypatch.setattr(wake, "run_tool_task_completion", fake_completion)
+    return sent
+
+
+@pytest.mark.asyncio
+async def test_a_task_nobody_waits_for_reports_its_result_to_the_chat(reports):
+    release = asyncio.Event()
+
+    async def handler(event):
+        await release.wait()
+        return "research report"
+
+    event = _Event()
+    event.get_sender_id = lambda: "42"
+    event.get_group_id = lambda: "1"
+    await _run(_tool(handler), _ctx(event, timeout=1))
+    (entry,) = tool_tasks._tasks.values()
+    release.set()
+    for _ in range(50):
+        if reports:
+            break
+        await asyncio.sleep(0.02)
+    (sent,) = reports
+    assert sent["task_id"] == entry.id and sent["tool_name"] == "research"
+    assert sent["session_str"] == event.unified_msg_origin
+    assert (sent["sender_id"], sent["group_id"], sent["role"]) == ("42", "1", "member")
+    assert _text(sent["result"]) == "research report"
+    # Collected by the report: a later wait finds nothing.
+    assert not tool_tasks._tasks
+
+
+@pytest.mark.asyncio
+async def test_a_waited_for_task_is_not_reported_again(reports):
+    async def handler(event):
+        await asyncio.sleep(1.3)
+        return "research report"
+
+    event = _Event()
+    await _run(_tool(handler), _ctx(event, timeout=1))
+    (entry,) = tool_tasks._tasks.values()
+    result = await ToolTaskTool().call(
+        _ctx(event, 10), task_id=entry.id, action="wait", wait_seconds=3
+    )
+    assert _text(result) == "research report"
+    await asyncio.sleep(0.1)
+    assert reports == []
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_task_reports_nothing(reports):
+    async def handler(event):
+        await asyncio.sleep(30)
+
+    event = _Event()
+    await _run(_tool(handler), _ctx(event, timeout=1))
+    (entry,) = tool_tasks._tasks.values()
+    await ToolTaskTool().call(_ctx(event, 10), task_id=entry.id, action="cancel")
+    entry.task.cancel()
+    await asyncio.sleep(0.1)
+    assert reports == []
+
+
+@pytest.mark.asyncio
+async def test_the_report_is_a_message_with_the_result(monkeypatch):
+    import mcp
+
+    from astrbot.core.agent.runners.codex import wake
+
+    delivered: list[dict] = []
+
+    async def fake_deliver(ctx, **kwargs):
+        delivered.append(kwargs)
+        return True
+
+    async def keep(text, mode, label=""):
+        return text
+
+    monkeypatch.setattr(wake, "deliver_chat_event", fake_deliver)
+    monkeypatch.setattr(wake.content_moderation, "filter_tool_text", keep)
+    result = mcp.types.CallToolResult(
+        content=[mcp.types.TextContent(type="text", text="报告：结论 A")]
+    )
+    await wake.run_tool_task_completion(
+        object(),
+        session_str="qq:GroupMessage:1",
+        sender_id="42",
+        role="member",
+        group_id="1",
+        task_id="abc",
+        tool_name="deepseek_research",
+        elapsed=312.4,
+        result=result,
+    )
+    (sent,) = delivered
+    assert sent["sender_id"] == "42" and sent["session_str"] == "qq:GroupMessage:1"
+    prompt = sent["prompt"]
+    assert '<tool_task_finished task_id="abc" tool="deepseek_research"' in prompt
+    assert 'seconds="312" status="done"' in prompt and "报告：结论 A" in prompt

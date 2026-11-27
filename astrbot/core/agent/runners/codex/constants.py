@@ -84,7 +84,8 @@ should be done in seconds; otherwise say what is running and end your turn, \
 and its result comes back to you as a message. `wait` does not take S.
 - A tool past its time limit is reported as still running as a task: decide \
 with `tools.astrbot_tool_task({task_id, action})`: "wait" for the result, \
-"status", or "cancel".
+"status", or "cancel"; or say what is running and end your turn, and its \
+result comes back to you as a message.
 """
 
 CODE_MODE_TOOLS_PROMPT = (

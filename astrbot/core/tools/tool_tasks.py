@@ -4,7 +4,9 @@ A tool still running when ``tool_call_timeout`` passes is not stopped: it keeps
 running as a *tool task*, and the model gets a reminder instead of a result.
 The model then decides, through :class:`ToolTaskTool`, whether to wait for the
 result, check on it, or cancel it. Tasks belong to the chat (``umo``) that
-started them and are dropped an hour after they finish if nobody collects them.
+started them. A task that finishes while nobody waits for it is reported back
+to its chat (``on_unclaimed``: as a message from whoever started it), so the
+model hears of the result even after its turn is over.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +22,7 @@ import mcp
 from pydantic import Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
+from astrbot.core import logger
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
@@ -55,6 +59,8 @@ class ToolTask:
     # the chat needs permission for that tool to collect or cancel it.
     sender_id: str = ""
     mcp_server: str | None = None
+    # `wait` calls waiting on it right now: they collect the result.
+    waiters: int = 0
 
     @property
     def done(self) -> bool:
@@ -65,6 +71,8 @@ class ToolTask:
 
 
 _tasks: dict[str, ToolTask] = {}
+# Reports of finished tasks on their way to the chat (kept from GC).
+_reports: set[asyncio.Future] = set()
 
 
 def _purge() -> None:
@@ -87,6 +95,8 @@ def register_tool_task(
     delivered: int,
     sender_id: str = "",
     mcp_server: str | None = None,
+    on_unclaimed: Callable[[ToolTask, mcp.types.CallToolResult], Awaitable[None]]
+    | None = None,
 ) -> ToolTask:
     """Keep a still-running tool call as a task the model can come back to.
 
@@ -99,6 +109,8 @@ def register_tool_task(
         delivered: How many of ``outputs`` the model has already seen.
         sender_id: Who started it; another sender needs the tool's permission.
         mcp_server: The MCP server of the tool, for that permission check.
+        on_unclaimed: Called with the task and its result when it finishes
+            while no `wait` waits for it (a cancelled task reports nothing).
 
     Returns:
         The registered task.
@@ -118,10 +130,34 @@ def register_tool_task(
 
     def _finished(t: asyncio.Task) -> None:
         entry.finished_at = time.time()
+        if on_unclaimed is not None:
+            report = asyncio.ensure_future(_report_unclaimed(entry, on_unclaimed))
+            _reports.add(report)
+            report.add_done_callback(_reports.discard)
 
     task.add_done_callback(_finished)
     _tasks[entry.id] = entry
     return entry
+
+
+async def _report_unclaimed(
+    entry: ToolTask,
+    on_unclaimed: Callable[[ToolTask, mcp.types.CallToolResult], Awaitable[None]],
+) -> None:
+    """Hands a finished task's result to its chat unless something collects it."""
+    # A `wait` woken by the same completion runs first and collects it.
+    await asyncio.sleep(0)
+    if entry.waiters or _tasks.get(entry.id) is not entry:
+        return
+    if entry.task.cancelled():
+        # Stopped (/stop, or the turn's cancellation): nothing to report.
+        _tasks.pop(entry.id, None)
+        return
+    result = _finished_result(entry)
+    try:
+        await on_unclaimed(entry, result)
+    except Exception as e:  # noqa: BLE001 - the result is still logged
+        logger.error("Could not report tool task %s to its chat: %s", entry.id, e)
 
 
 def get_tool_task(task_id: str, umo: str) -> ToolTask | None:
@@ -157,7 +193,8 @@ def timeout_reminder(entry: ToolTask, timeout: float) -> str:
         f"Decide what to do with `{TOOL_TASK_TOOL_NAME}` "
         f'(task_id="{entry.id}"): action "wait" to wait for its result, '
         '"status" to check on it, or "cancel" to stop it. If it may take a '
-        "while, tell the user before waiting."
+        "while, tell the user before waiting. If you end your turn instead, "
+        "its result comes back to you as a message when it finishes."
     )
 
 
@@ -307,7 +344,11 @@ class ToolTaskTool(FunctionTool[AstrAgentContext]):
         # 0 checks without waiting.
         wait_seconds = max(0.0, min(wait_seconds, cap))
         if not entry.done and wait_seconds > 0:
-            await asyncio.wait({entry.task}, timeout=wait_seconds)
+            entry.waiters += 1
+            try:
+                await asyncio.wait({entry.task}, timeout=wait_seconds)
+            finally:
+                entry.waiters -= 1
         if entry.done:
             return _finished_result(entry)
         return _text(
