@@ -69,3 +69,13 @@ def test_both_guides_share_everything_but_the_tool_and_example():
     for guide in (CODE_MODE_TOOLS_PROMPT, RUN_CODE_TOOLS_PROMPT):
         assert "# Work that is still running" in guide
         assert 'wait({cell_id: "N"})' in guide
+
+
+def test_lookups_go_to_openai_research_first():
+    for guide in (CODE_MODE_TOOLS_PROMPT, RUN_CODE_TOOLS_PROMPT):
+        text = " ".join(guide.split())
+        assert "call `tools.openai_research` first" in text
+        assert (
+            "`tools.deepseek_research` only for information published mostly in Chinese"
+            in text
+        )
