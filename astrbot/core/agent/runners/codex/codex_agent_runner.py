@@ -35,11 +35,12 @@ from ...response import AgentResponseData, AgentStats
 from ...run_context import ContextWrapper, TContext
 from ..base import AgentResponse, AgentState, BaseAgentRunner
 from .constants import (
+    CODE_MODE_TOOLS_PROMPT,
     CODEX_RUNNER_TYPE,
     CODEX_THREAD_STATE_KEY,
     CODEX_TOOL_NAMESPACE,
-    CODE_MODE_TOOLS_PROMPT,
     DEFAULT_SYSTEM_PROMPT,
+    RUN_CODE_TOOLS_PROMPT,
 )
 from .native import (
     ACTIVE_TURNS,
@@ -404,11 +405,30 @@ def _log_diagnostic(umo: str, thread_id: str, msg: JsonObject, elapsed: float) -
 def system_prompt(cfg: dict) -> str:
     """The thread's base instructions: the operator's own prompt or the default
     one, and in code mode the guide to calling and orchestrating tools from
-    code, which a custom prompt does not replace."""
+    code, which a custom prompt does not replace. An open-weight model's
+    provider offers code mode as `run_code`, which takes TypeScript, so its
+    guide shows TypeScript; `exec` takes JavaScript.
+
+    Args:
+        cfg: The Codex runner's provider config.
+
+    Returns:
+        The base instructions.
+    """
     custom = str(cfg.get("base_instructions") or "").strip()
     prompt = custom or DEFAULT_SYSTEM_PROMPT.rstrip()
     if (cfg.get("tool_mode") or "code_mode_only") in CODE_MODES:
-        prompt = f"{prompt}\n\n{CODE_MODE_TOOLS_PROMPT}"
+        # The id as model_provider_overrides writes it.
+        pid = str(cfg.get("model_provider") or "")
+        providers = cfg.get("model_providers")
+        open_model = any(
+            isinstance(p, dict)
+            and p.get("open_model") is True
+            and re.sub(r"[^A-Za-z0-9_-]", "_", str(p.get("id") or "").strip()) == pid
+            for p in (providers if isinstance(providers, list) else [])
+        )
+        guide = RUN_CODE_TOOLS_PROMPT if pid and open_model else CODE_MODE_TOOLS_PROMPT
+        prompt = f"{prompt}\n\n{guide}"
     return prompt
 
 

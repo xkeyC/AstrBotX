@@ -35,11 +35,13 @@ paragraphs and simple lists read best in chat apps.
 
 # Appended to the system prompt (the default one or the operator's own) when
 # AstrBot's tools are called from code (code mode): how to call them, and how
-# to orchestrate them well. Also part of the cached prefix.
-CODE_MODE_TOOLS_PROMPT = """\
+# to orchestrate them well. Also part of the cached prefix. Open-weight models
+# get code mode as `run_code`, which takes TypeScript checked against the
+# tools' declarations; the others get `exec`, which takes JavaScript.
+_CODE_MODE_TOOLS_HEAD = """\
 # Tools
 - AstrBot's tools (plugins, sandbox, platform actions) are called from code, \
-in the code tool (`exec`, or `run_code` for some models), on the global \
+in the code tool (CODE_TOOL), on the global \
 `tools` object by the names the tool catalog lists (e.g. \
 `tools.exec_command(...)`, a plugin's as `tools.<plugin>__<tool>(...)`). List \
 them with `ALL_TOOLS` when you are unsure which exist.
@@ -61,21 +63,9 @@ the independent ones together, and cut big results down before they reach \
 you. A few full scripts are faster and cheaper than one call per script, and \
 what you print is what you pay to read.
 
-```js
-// Independent calls together; one failing does not sink the others.
-const [a, b] = await Promise.allSettled([
-  tools.example__search({ query: "first" }),
-  tools.example__search({ query: "second" }),
-]);
-// Dependent steps in order, in the same script.
-const page = a.status === "fulfilled" && !a.value.isError ? a.value.text : "";
-const detail = page ? await tools.example__fetch({ url: page.match(/https?:\\/\\/\\S+/)?.[0] }) : null;
-// Print only what you need, not whole pages or logs.
-text(detail?.text.slice(0, 2000) ?? "nothing found");
-// Keep data for a later script instead of printing it all now.
-store("detail", detail?.text);
-```
+"""
 
+_CODE_MODE_TOOLS_TAIL = """
 - Before something slow, tell the user with `notify("...")` in the same \
 script, then do it.
 - Check `isError` and handle a failure in the script (try another source, \
@@ -96,3 +86,49 @@ and its result comes back to you as a message. `wait` does not take S.
 with `tools.astrbot_tool_task({task_id, action})`: "wait" for the result, \
 "status", or "cancel".
 """
+
+CODE_MODE_TOOLS_PROMPT = (
+    _CODE_MODE_TOOLS_HEAD.replace("CODE_TOOL", "`exec`")
+    + """```js
+// Independent calls together; one failing does not sink the others.
+const [a, b] = await Promise.allSettled([
+  tools.example__search({ query: "first" }),
+  tools.example__search({ query: "second" }),
+]);
+// Dependent steps in order, in the same script.
+const page = a.status === "fulfilled" && !a.value.isError ? a.value.text : "";
+const detail = page ? await tools.example__fetch({ url: page.match(/https?:\\/\\/\\S+/)?.[0] }) : null;
+// Print only what you need, not whole pages or logs.
+text(detail?.text.slice(0, 2000) ?? "nothing found");
+// Keep data for a later script instead of printing it all now.
+store("detail", detail?.text);
+```
+"""
+    + _CODE_MODE_TOOLS_TAIL
+)
+
+RUN_CODE_TOOLS_PROMPT = (
+    _CODE_MODE_TOOLS_HEAD.replace("CODE_TOOL", "`run_code`").replace(
+        "pay to read.\n",
+        "pay to read. Write TypeScript: `run_code` checks the program against "
+        "the tools' declarations before it runs, and a type error comes back "
+        'instead of a result; pass arguments as declared (`limit: 5`, not `"5"`).\n',
+    )
+    + """```ts
+// Independent calls together; one failing does not sink the others.
+const [a, b] = await Promise.allSettled([
+  tools.example__search({ query: "first", limit: 5 }),
+  tools.example__search({ query: "second", limit: 5 }),
+]);
+// Dependent steps in order, in the same program.
+const page: string = a.status === "fulfilled" && !a.value.isError ? a.value.text : "";
+const url = page.match(/https?:\\/\\/\\S+/)?.[0];
+const detail = url ? await tools.example__fetch({ url }) : null;
+// Print only what you need, not whole pages or logs.
+text(detail?.text.slice(0, 2000) ?? "nothing found");
+// Keep data for a later program instead of printing it all now.
+store("detail", detail?.text);
+```
+"""
+    + _CODE_MODE_TOOLS_TAIL
+)
