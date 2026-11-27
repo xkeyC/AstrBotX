@@ -18,6 +18,11 @@ from astrbot.core.utils.astrbot_path import (
 from .booters.base import ComputerBooter
 
 session_booter: dict[str, ComputerBooter] = {}
+# One boot per session at a time: concurrent first calls (parallel tool calls,
+# a plugin's subagent next to the chat) would otherwise boot the same bound
+# sandbox twice, race in its skill sync, and the loser would rebind the session
+# to a fresh sandbox, leaving the workspace behind.
+_session_boot_locks: dict[str, asyncio.Lock] = {}
 _MANAGED_SKILLS_FILE = ".astrbot_managed_skills.json"
 
 
@@ -598,142 +603,150 @@ async def get_booter(
     context: Context,
     session_id: str,
 ) -> ComputerBooter:
-    config = context.get_config(umo=session_id)
+    async with _session_boot_locks.setdefault(session_id, asyncio.Lock()):
+        config = context.get_config(umo=session_id)
 
-    runtime = config.get("provider_settings", {}).get("computer_use_runtime", "none")
-    if runtime != "sandbox":
-        raise RuntimeError("Sandbox runtime is disabled by configuration.")
-
-    sandbox_cfg = config.get("provider_settings", {}).get("sandbox", {})
-    booter_type = sandbox_cfg.get("booter", "shipyard_neo")
-    cua_idle_timeout = _get_cua_idle_timeout(config) if booter_type == "cua" else 0.0
-
-    if session_id in session_booter:
-        booter = session_booter[session_id]
-        if not await booter.available():
-            # Clean up old booter before rebuilding so sandbox resources
-            # on Bay (containers, volumes, networks) are not leaked.
-            # Only ShipyardNeoBooter supports delete_sandbox; other booters
-            # (boxlite, cua, etc.) are not backed by a remote sandbox
-            # manager and don't need it.
-            try:
-                if booter_type == "shipyard_neo":
-                    await booter.shutdown(delete_sandbox=True)
-                else:
-                    await booter.shutdown()
-            except Exception as shutdown_err:
-                logger.warning(
-                    "[Computer] Error shutting down stale booter for session %s: %s",
-                    session_id,
-                    shutdown_err,
-                )
-            _clear_cua_idle_state(session_id)
-            session_booter.pop(session_id, None)
-    if session_id not in session_booter:
-        uuid_str = uuid.uuid5(uuid.NAMESPACE_DNS, session_id).hex
-        logger.info(
-            f"[Computer] Initializing booter: type={booter_type}, session={session_id}"
+        runtime = config.get("provider_settings", {}).get(
+            "computer_use_runtime", "none"
         )
-        if booter_type == "shipyard":
-            from .booters.shipyard import ShipyardBooter
+        if runtime != "sandbox":
+            raise RuntimeError("Sandbox runtime is disabled by configuration.")
 
-            ep = sandbox_cfg.get("shipyard_endpoint", "")
-            token = sandbox_cfg.get("shipyard_access_token", "")
-            ttl = sandbox_cfg.get("shipyard_ttl", 43200)
-            max_sessions = sandbox_cfg.get("shipyard_max_sessions", 10)
+        sandbox_cfg = config.get("provider_settings", {}).get("sandbox", {})
+        booter_type = sandbox_cfg.get("booter", "shipyard_neo")
+        cua_idle_timeout = (
+            _get_cua_idle_timeout(config) if booter_type == "cua" else 0.0
+        )
 
-            client = ShipyardBooter(
-                endpoint_url=ep, access_token=token, ttl=ttl, session_num=max_sessions
-            )
-        elif booter_type == "shipyard_neo":
-            from .booters.shipyard_neo import ShipyardNeoBooter
-
-            ep = sandbox_cfg.get("shipyard_neo_endpoint", "")
-            token = sandbox_cfg.get("shipyard_neo_access_token", "")
-            ttl = sandbox_cfg.get("shipyard_neo_ttl", 43200)
-            profile = sandbox_cfg.get("shipyard_neo_profile", "")
-
-            # Auto-discover token from Bay's credentials.json if not configured
-            if not token:
-                token = _discover_bay_credentials(ep)
-
-            logger.info(
-                f"[Computer] Shipyard Neo config: endpoint={ep}, profile={profile}, ttl={ttl}"
-            )
-            bound = await _load_sandbox_binding(session_id, booter_type, ep)
-            client = ShipyardNeoBooter(
-                endpoint_url=ep,
-                access_token=token,
-                profile=profile,
-                ttl=ttl,
-                reuse_sandbox_id=bound,
-            )
-        elif booter_type == "cua":
-            from .booters.cua import CuaBooter, build_cua_booter_kwargs
-
-            cua_kwargs = build_cua_booter_kwargs(sandbox_cfg)
-            logger.info(
-                f"[Computer] CUA config: image={cua_kwargs['image']}, "
-                f"os_type={cua_kwargs['os_type']}, ttl={cua_kwargs['ttl']}"
-            )
-            client = CuaBooter(**cua_kwargs)
-        elif booter_type == "boxlite":
-            from .booters.boxlite import BoxliteBooter
-
-            client = BoxliteBooter()
-        else:
-            raise ValueError(f"Unknown booter type: {booter_type}")
-
-        try:
-            try:
-                await client.boot(uuid_str)
-                await _sync_skills_to_sandbox(client)
-            except Exception as reuse_err:
-                if getattr(client, "reused_sandbox", False) is not True:
-                    raise
-                # The persisted sandbox is unusable: keep it (Bay GC reclaims
-                # it by TTL) and fall back to a fresh one.
-                logger.warning(
-                    "[Computer] Reused sandbox %s failed for session %s (%s); "
-                    "creating a new one",
-                    getattr(client, "sandbox_id", ""),
-                    session_id,
-                    reuse_err,
-                )
+        if session_id in session_booter:
+            booter = session_booter[session_id]
+            if not await booter.available():
+                # Clean up old booter before rebuilding so sandbox resources
+                # on Bay (containers, volumes, networks) are not leaked.
+                # Only ShipyardNeoBooter supports delete_sandbox; other booters
+                # (boxlite, cua, etc.) are not backed by a remote sandbox
+                # manager and don't need it.
                 try:
-                    await client.shutdown()
-                except Exception as shutdown_err:  # noqa: BLE001
+                    if booter_type == "shipyard_neo":
+                        await booter.shutdown(delete_sandbox=True)
+                    else:
+                        await booter.shutdown()
+                except Exception as shutdown_err:
                     logger.warning(
-                        "[Computer] Error closing reused sandbox client: %s",
+                        "[Computer] Error shutting down stale booter for session %s: %s",
+                        session_id,
                         shutdown_err,
                     )
-                client = client.without_reuse()
-                await client.boot(uuid_str)
-                await _sync_skills_to_sandbox(client)
+                _clear_cua_idle_state(session_id)
+                session_booter.pop(session_id, None)
+        if session_id not in session_booter:
+            uuid_str = uuid.uuid5(uuid.NAMESPACE_DNS, session_id).hex
             logger.info(
-                f"[Computer] Sandbox booted successfully: type={booter_type}, session={session_id}"
+                f"[Computer] Initializing booter: type={booter_type}, session={session_id}"
             )
-        except Exception as e:
-            logger.error(f"Error booting sandbox for session {session_id}: {e}")
-            try:
-                if booter_type == "shipyard_neo":
-                    await client.shutdown(delete_sandbox=True)
-                else:
-                    await client.shutdown()
-            except Exception as shutdown_error:
-                logger.warning(
-                    "Failed to shutdown sandbox after boot error for session %s: %s",
-                    session_id,
-                    shutdown_error,
-                )
-            _clear_cua_idle_state(session_id)
-            raise e
+            if booter_type == "shipyard":
+                from .booters.shipyard import ShipyardBooter
 
-        session_booter[session_id] = client
-        await _save_sandbox_binding(session_id, booter_type, sandbox_cfg, client)
-    if booter_type == "cua":
-        _schedule_cua_idle_cleanup(session_id, cua_idle_timeout)
-    return session_booter[session_id]
+                ep = sandbox_cfg.get("shipyard_endpoint", "")
+                token = sandbox_cfg.get("shipyard_access_token", "")
+                ttl = sandbox_cfg.get("shipyard_ttl", 43200)
+                max_sessions = sandbox_cfg.get("shipyard_max_sessions", 10)
+
+                client = ShipyardBooter(
+                    endpoint_url=ep,
+                    access_token=token,
+                    ttl=ttl,
+                    session_num=max_sessions,
+                )
+            elif booter_type == "shipyard_neo":
+                from .booters.shipyard_neo import ShipyardNeoBooter
+
+                ep = sandbox_cfg.get("shipyard_neo_endpoint", "")
+                token = sandbox_cfg.get("shipyard_neo_access_token", "")
+                ttl = sandbox_cfg.get("shipyard_neo_ttl", 43200)
+                profile = sandbox_cfg.get("shipyard_neo_profile", "")
+
+                # Auto-discover token from Bay's credentials.json if not configured
+                if not token:
+                    token = _discover_bay_credentials(ep)
+
+                logger.info(
+                    f"[Computer] Shipyard Neo config: endpoint={ep}, profile={profile}, ttl={ttl}"
+                )
+                bound = await _load_sandbox_binding(session_id, booter_type, ep)
+                client = ShipyardNeoBooter(
+                    endpoint_url=ep,
+                    access_token=token,
+                    profile=profile,
+                    ttl=ttl,
+                    reuse_sandbox_id=bound,
+                )
+            elif booter_type == "cua":
+                from .booters.cua import CuaBooter, build_cua_booter_kwargs
+
+                cua_kwargs = build_cua_booter_kwargs(sandbox_cfg)
+                logger.info(
+                    f"[Computer] CUA config: image={cua_kwargs['image']}, "
+                    f"os_type={cua_kwargs['os_type']}, ttl={cua_kwargs['ttl']}"
+                )
+                client = CuaBooter(**cua_kwargs)
+            elif booter_type == "boxlite":
+                from .booters.boxlite import BoxliteBooter
+
+                client = BoxliteBooter()
+            else:
+                raise ValueError(f"Unknown booter type: {booter_type}")
+
+            try:
+                try:
+                    await client.boot(uuid_str)
+                    await _sync_skills_to_sandbox(client)
+                except Exception as reuse_err:
+                    if getattr(client, "reused_sandbox", False) is not True:
+                        raise
+                    # The persisted sandbox is unusable: keep it (Bay GC reclaims
+                    # it by TTL) and fall back to a fresh one.
+                    logger.warning(
+                        "[Computer] Reused sandbox %s failed for session %s (%s); "
+                        "creating a new one",
+                        getattr(client, "sandbox_id", ""),
+                        session_id,
+                        reuse_err,
+                    )
+                    try:
+                        await client.shutdown()
+                    except Exception as shutdown_err:  # noqa: BLE001
+                        logger.warning(
+                            "[Computer] Error closing reused sandbox client: %s",
+                            shutdown_err,
+                        )
+                    client = client.without_reuse()
+                    await client.boot(uuid_str)
+                    await _sync_skills_to_sandbox(client)
+                logger.info(
+                    f"[Computer] Sandbox booted successfully: type={booter_type}, session={session_id}"
+                )
+            except Exception as e:
+                logger.error(f"Error booting sandbox for session {session_id}: {e}")
+                try:
+                    if booter_type == "shipyard_neo":
+                        await client.shutdown(delete_sandbox=True)
+                    else:
+                        await client.shutdown()
+                except Exception as shutdown_error:
+                    logger.warning(
+                        "Failed to shutdown sandbox after boot error for session %s: %s",
+                        session_id,
+                        shutdown_error,
+                    )
+                _clear_cua_idle_state(session_id)
+                raise e
+
+            session_booter[session_id] = client
+            await _save_sandbox_binding(session_id, booter_type, sandbox_cfg, client)
+        if booter_type == "cua":
+            _schedule_cua_idle_cleanup(session_id, cua_idle_timeout)
+        return session_booter[session_id]
 
 
 async def sync_skills_to_active_sandboxes() -> None:
@@ -743,9 +756,12 @@ async def sync_skills_to_active_sandboxes() -> None:
     )
     for session_id, booter in list(session_booter.items()):
         try:
-            if not await booter.available():
-                continue
-            await _sync_skills_to_sandbox(booter)
+            async with _session_boot_locks.setdefault(session_id, asyncio.Lock()):
+                if session_booter.get(session_id) is not booter:
+                    continue
+                if not await booter.available():
+                    continue
+                await _sync_skills_to_sandbox(booter)
         except Exception as e:
             logger.warning(
                 "Failed to sync skills to sandbox for session %s: %s",

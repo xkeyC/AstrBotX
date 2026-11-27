@@ -4,6 +4,7 @@ This module tests the ComputerClient and the sandbox booter implementations
 (shipyard, boxlite) and the skill sync to sandboxes.
 """
 
+import asyncio
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -543,6 +544,55 @@ class TestComputerClient:
             assert booter1 is booter2
 
         # Cleanup
+        computer_client.session_booter.clear()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_first_calls_boot_one_sandbox(self):
+        """Parallel first calls for a session share one boot and one skill sync."""
+        from astrbot.core.computer import computer_client
+        from astrbot.core.computer.booters.shipyard import ShipyardBooter
+
+        computer_client.session_booter.clear()
+        mock_context = MagicMock()
+        mock_config = MagicMock()
+        mock_config.get = lambda key, default=None: {
+            "provider_settings": {
+                "computer_use_runtime": "sandbox",
+                "sandbox": {
+                    "booter": "shipyard",
+                    "shipyard_endpoint": "http://localhost:8080",
+                    "shipyard_access_token": "test_token",
+                },
+            }
+        }.get(key, default)
+        mock_context.get_config = MagicMock(return_value=mock_config)
+
+        async def slow_sync(_booter):
+            await asyncio.sleep(0.05)
+
+        sync = AsyncMock(side_effect=slow_sync)
+        boot = AsyncMock()
+        with (
+            patch.object(ShipyardBooter, "boot", new=boot),
+            patch.object(ShipyardBooter, "available", new=AsyncMock(return_value=True)),
+            patch(
+                "astrbot.core.computer.computer_client._sync_skills_to_sandbox",
+                sync,
+            ),
+            patch(
+                "astrbot.core.computer.computer_client._save_sandbox_binding",
+                AsyncMock(),
+            ),
+        ):
+            booters = await asyncio.gather(
+                *(
+                    computer_client.get_booter(mock_context, "race-session")
+                    for _ in range(3)
+                )
+            )
+        assert booters[0] is booters[1] is booters[2]
+        assert boot.await_count == 1
+        assert sync.await_count == 1
         computer_client.session_booter.clear()
 
     @pytest.mark.asyncio
