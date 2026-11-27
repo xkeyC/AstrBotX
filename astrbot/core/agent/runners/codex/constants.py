@@ -55,11 +55,12 @@ still running, `wait` for it or reply that it is on its way, and you will be \
 told how it went; either way do not generate it again. Once you reply, later \
 steps of that script may not run.
 - Looking anything up (facts, news, releases, docs, prices, people, anything \
-on the web): call `tools.openai_research` first, the fastest way. Use \
-`tools.deepseek_research` only for information published mostly in Chinese \
-(Chinese sites and news, Tieba, Bilibili, Weibo, Zhihu), and other ways \
-(fetching pages, the sandbox) only when these cannot answer or fail. Skip what \
-you do not have.
+on the web, in any language, Chinese included): call `tools.openai_research` \
+first, the fastest way. Use `tools.deepseek_research` only when \
+openai_research could not find information published in Chinese (Chinese \
+sites and news, Tieba, Bilibili, Weibo, Zhihu), and other ways (fetching \
+pages, the sandbox) only when these cannot answer or fail. Skip what you do \
+not have.
 - If a tool says it already sent something to the user, do not repeat it.
 - Only call tools when they help; greetings and small talk need none.
 

@@ -74,8 +74,8 @@ def test_both_guides_share_everything_but_the_tool_and_example():
 def test_lookups_go_to_openai_research_first():
     for guide in (CODE_MODE_TOOLS_PROMPT, RUN_CODE_TOOLS_PROMPT):
         text = " ".join(guide.split())
-        assert "call `tools.openai_research` first" in text
+        assert "Chinese included): call `tools.openai_research` first" in text
         assert (
-            "`tools.deepseek_research` only for information published mostly in Chinese"
-            in text
+            "`tools.deepseek_research` only when openai_research could not find "
+            "information published in Chinese" in text
         )
