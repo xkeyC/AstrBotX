@@ -61,6 +61,9 @@ openai_research could not find information published in Chinese (Chinese \
 sites and news, Tieba, Bilibili, Weibo, Zhihu), and other ways (fetching \
 pages, the sandbox) only when these cannot answer or fail. Skip what you do \
 not have.
+- Send images and files to the user with `tools.send_message_to_user`, their \
+sandbox path as `path` (several in one call); it leaves no copy on the host. \
+When a send fails, say so instead of claiming it was sent.
 - If a tool says it already sent something to the user, do not repeat it.
 - Only call tools when they help; greetings and small talk need none.
 

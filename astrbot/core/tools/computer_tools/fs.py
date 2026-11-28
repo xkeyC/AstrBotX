@@ -493,9 +493,10 @@ class FileUploadTool(FunctionTool):
 class FileDownloadTool(FunctionTool):
     name: str = "astrbot_download_file"
     description: str = (
-        "Transfer a file FROM the sandbox OUT to the host and optionally send it "
-        "to the user. Use this ONLY when the user asks to retrieve/export a file "
-        "that was created or modified inside the sandbox."
+        "Copy a file from the sandbox out to the host, where the copy stays. Use "
+        "it only when a copy on the host is wanted. To send images or files to "
+        "the user, use send_message_to_user with the sandbox path instead: it "
+        "leaves no copy behind."
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -503,11 +504,11 @@ class FileDownloadTool(FunctionTool):
             "properties": {
                 "remote_path": {
                     "type": "string",
-                    "description": "Path of the file inside the sandbox to copy out to the host.",
+                    "description": "Path of the file in the sandbox.",
                 },
                 "also_send_to_user": {
                     "type": "boolean",
-                    "description": "Whether to also send the downloaded file to the user via message. Defaults to true.",
+                    "description": "Also send the copy to the user (default true).",
                 },
             },
             "required": ["remote_path"],
@@ -552,8 +553,11 @@ class FileDownloadTool(FunctionTool):
                 except Exception as e:
                     logger.error(f"Error sending file message: {e}")
                     return (
-                        f"File downloaded successfully to {local_path} "
-                        f"but sending to user failed: {e}"
+                        f"NOT confirmed sent: sending {name} to the user failed "
+                        f"({e}). After a timeout it may still have arrived. Do "
+                        "not say it was sent; tell the user it may be missing, "
+                        "and send it again only if they ask. The copy on the "
+                        f"host is {local_path}."
                     )
 
                 # remove
@@ -562,12 +566,9 @@ class FileDownloadTool(FunctionTool):
                 # except Exception as e:
                 #     logger.error(f"Error removing temp file {local_path}: {e}")
 
-                return (
-                    f"File downloaded successfully to {local_path} "
-                    f"and sent to user as {sent_as}."
-                )
+                return f"Sent {name} to the user as {sent_as}."
 
-            return f"File downloaded successfully to {local_path}"
+            return f"Copied {remote_path} to the host: {local_path}"
         except Exception as e:
             logger.error(f"Error downloading file {remote_path}: {e}")
             return f"Error downloading file: {str(e)}"

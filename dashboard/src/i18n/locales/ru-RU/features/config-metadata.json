@@ -316,6 +316,10 @@
                 "description": "Адрес файлового API",
                 "hint": "Базовый адрес для загрузки файлов из Telegram Bot API. Обычно официальный адрес менять не нужно."
             },
+            "telegram_request_timeout": {
+                "description": "Тайм-аут запроса (с)",
+                "hint": "Сколько вызов Telegram Bot API ждёт ответа или загрузки; для фото, видео и файлов — вдвое дольше. Увеличьте при медленной сети или отправке нескольких изображений сразу."
+            },
             "bot_token": {
                 "description": "Slack Bot Token",
                 "hint": "Bot User OAuth Token приложения Slack, обычно начинается с xoxb-."

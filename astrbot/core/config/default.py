@@ -430,6 +430,7 @@ CONFIG_METADATA_2 = {
                         "telegram_command_auto_refresh": True,
                         "telegram_command_register_interval": 300,
                         "telegram_polling_restart_delay": 5.0,
+                        "telegram_request_timeout": 60,
                     },
                     "Discord": {
                         "id": "discord",
@@ -629,6 +630,12 @@ CONFIG_METADATA_2 = {
                         "description": "文件 API 地址",
                         "type": "string",
                         "hint": "Telegram Bot API 文件下载接口的基础地址。使用官方服务时通常无需修改。",
+                        "show_key": True,
+                    },
+                    "telegram_request_timeout": {
+                        "description": "请求超时（秒）",
+                        "type": "int",
+                        "hint": "调用 Telegram Bot API 时等待响应和上传的时间；发送图片、视频、文件的上传时间按它的两倍。网络慢或一次发多张图时调大。",
                         "show_key": True,
                     },
                     "bot_token": {

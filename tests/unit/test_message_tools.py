@@ -1,5 +1,6 @@
 """Tests for send_message_to_user session handling."""
 
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -501,3 +502,60 @@ async def test_send_message_downloads_trailing_slash_sandbox_file_with_basename(
     sent_chain = ctx.context.context.send_message.await_args.args[1]
     sent_file = sent_chain.chain[0]
     assert sent_file.name == "export"
+
+
+@pytest.mark.asyncio
+async def test_sent_sandbox_files_leave_no_copy_on_the_host(tmp_path, monkeypatch):
+    """Files fetched from the sandbox for a send are removed once it is done,
+    sent or not; a host file given by path is left alone."""
+    tool = SendMessageToUserTool()
+    ctx = _make_context(runtime="sandbox")
+    temp_root = tmp_path / "temp"
+    temp_root.mkdir()
+    monkeypatch.setattr(
+        "astrbot.core.tools.message_tools.get_astrbot_temp_path",
+        lambda: str(temp_root),
+    )
+
+    async def _exec(_command):
+        return {"content": "_&exists_"}
+
+    async def _download_file(_remote_path, local_path):
+        with open(local_path, "wb") as file:
+            file.write(b"\x89PNG")
+
+    booter = SimpleNamespace(
+        shell=SimpleNamespace(exec=AsyncMock(side_effect=_exec)),
+        download_file=AsyncMock(side_effect=_download_file),
+    )
+
+    async def mock_get_booter(*args, **kwargs):
+        return booter
+
+    monkeypatch.setattr("astrbot.core.tools.message_tools.get_booter", mock_get_booter)
+    seen: list[bool] = []
+
+    async def _send(_session, chain):
+        # Still there while it is being sent.
+        seen.extend(
+            os.path.exists(str(c.file).removeprefix("file://")) for c in chain.chain
+        )
+        return True
+
+    ctx.context.context.send_message = AsyncMock(side_effect=_send)
+    result = await tool.call(
+        ctx,
+        messages=[
+            {"type": "image", "path": "out/a.png"},
+            {"type": "file", "path": "out/b.zip"},
+        ],
+    )
+    assert "Message sent to session" in result
+    assert seen == [True, True]
+    assert list(temp_root.iterdir()) == []
+
+    # A failed send cleans up too.
+    ctx.context.context.send_message = AsyncMock(side_effect=RuntimeError("Timed out"))
+    result = await tool.call(ctx, messages=[{"type": "image", "path": "out/c.png"}])
+    assert "failed to send" in result
+    assert list(temp_root.iterdir()) == []

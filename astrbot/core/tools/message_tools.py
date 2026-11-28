@@ -1,3 +1,4 @@
+import contextlib
 import csv
 import io
 import json
@@ -80,10 +81,12 @@ def _can_send_local_file(
 class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
     name: str = "send_message_to_user"
     description: str = (
-        "Send message to the user. "
-        "Supports various message types including `plain`, `image`, `record`, `video`, `file`, and `mention_user`. "
-        "Use this tool to send media files (`image`, `record`, `video`, `file`), "
-        "or when you need to proactively message the user(such as cron job). For other normal text replies, you can output directly and no need to use this tool."
+        "Send a message to the user: text (`plain`), images, voice (`record`), "
+        "videos, files and mentions (`mention_user`). The way to send images and "
+        "files, including ones in the sandbox: give their sandbox path as `path` "
+        "(several in one call, in order); no copy stays on the host. Also for "
+        "messaging the user proactively (a cron job). Ordinary text replies need "
+        "no tool: just answer."
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -201,6 +204,25 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
         if not isinstance(messages, list) or not messages:
             return "error: messages parameter is empty or invalid."
 
+        # Sandbox files fetched for this send: removed once it is done, so a
+        # sent file leaves no copy on the host.
+        fetched: list[str] = []
+        try:
+            return await self._send(context, kwargs, session, current_session, fetched)
+        finally:
+            for local_path in fetched:
+                with contextlib.suppress(OSError):
+                    os.remove(local_path)
+
+    async def _send(
+        self,
+        context: ContextWrapper[AstrAgentContext],
+        kwargs: dict,
+        session: str,
+        current_session: str,
+        fetched: list[str],
+    ) -> ToolExecResult:
+        messages = kwargs.get("messages")
         components: list[Comp.BaseMessageComponent] = []
         for idx, msg in enumerate(messages):
             if not isinstance(msg, dict):
@@ -220,9 +242,14 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
                     path = msg.get("path")
                     url = msg.get("url")
                     if path:
-                        local_path, _ = await self._resolve_path_from_sandbox(
+                        (
+                            local_path,
+                            from_sandbox,
+                        ) = await self._resolve_path_from_sandbox(
                             context, path, component_type="image"
                         )
+                        if from_sandbox:
+                            fetched.append(local_path)
                         components.append(Comp.Image.fromFileSystem(path=local_path))
                     elif url:
                         components.append(Comp.Image.fromURL(url=url))
@@ -232,9 +259,14 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
                     path = msg.get("path")
                     url = msg.get("url")
                     if path:
-                        local_path, _ = await self._resolve_path_from_sandbox(
+                        (
+                            local_path,
+                            from_sandbox,
+                        ) = await self._resolve_path_from_sandbox(
                             context, path, component_type="record"
                         )
+                        if from_sandbox:
+                            fetched.append(local_path)
                         components.append(Comp.Record.fromFileSystem(path=local_path))
                     elif url:
                         components.append(Comp.Record.fromURL(url=url))
@@ -244,9 +276,14 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
                     path = msg.get("path")
                     url = msg.get("url")
                     if path:
-                        local_path, _ = await self._resolve_path_from_sandbox(
+                        (
+                            local_path,
+                            from_sandbox,
+                        ) = await self._resolve_path_from_sandbox(
                             context, path, component_type="video"
                         )
+                        if from_sandbox:
+                            fetched.append(local_path)
                         components.append(Comp.Video.fromFileSystem(path=local_path))
                     elif url:
                         components.append(Comp.Video.fromURL(url=url))
@@ -262,9 +299,14 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
                         or "file"
                     )
                     if path:
-                        local_path, _ = await self._resolve_path_from_sandbox(
+                        (
+                            local_path,
+                            from_sandbox,
+                        ) = await self._resolve_path_from_sandbox(
                             context, path, component_type="file"
                         )
+                        if from_sandbox:
+                            fetched.append(local_path)
                         components.append(Comp.File(name=name, file=local_path))
                     elif url:
                         components.append(Comp.File(name=name, url=url))

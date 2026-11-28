@@ -311,6 +311,10 @@
         "description": "File API URL",
         "hint": "The base URL used to download files from the Telegram Bot API. The official default normally does not need to be changed."
       },
+      "telegram_request_timeout": {
+          "description": "Request timeout (s)",
+          "hint": "How long a Telegram Bot API call waits for an answer or an upload; uploading photos, videos and files gets twice this. Raise it on a slow network or when sending several images at once."
+      },
       "bot_token": {
         "description": "Slack Bot Token",
         "hint": "The Slack application's Bot User OAuth Token, usually beginning with xoxb-."

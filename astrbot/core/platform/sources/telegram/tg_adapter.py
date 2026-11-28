@@ -145,11 +145,20 @@ class TelegramPlatformAdapter(Platform):
         )  # max seconds - hard cap to prevent indefinite delay
 
     def _build_application(self) -> None:
+        # python-telegram-bot's defaults (5 s to answer, 20 s to upload media,
+        # 1 s for a pooled connection) are too short for photos and files:
+        # a few sent at once timed out after about 6 s, some still delivered.
+        timeout = float(self.config.get("telegram_request_timeout") or 60)
         self.application = (
             ApplicationBuilder()
             .token(self.config["telegram_token"])
             .base_url(self.base_url)
             .base_file_url(self.file_base_url)
+            .connect_timeout(30)
+            .read_timeout(timeout)
+            .write_timeout(timeout)
+            .media_write_timeout(timeout * 2)
+            .pool_timeout(30)
             .build()
         )
         message_handler = TelegramMessageHandler(

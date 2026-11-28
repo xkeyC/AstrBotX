@@ -1297,6 +1297,11 @@ async def test_telegram_run_rebuilds_application_after_repeated_polling_errors()
     builder.token.return_value = builder
     builder.base_url.return_value = builder
     builder.base_file_url.return_value = builder
+    builder.connect_timeout.return_value = builder
+    builder.read_timeout.return_value = builder
+    builder.write_timeout.return_value = builder
+    builder.media_write_timeout.return_value = builder
+    builder.pool_timeout.return_value = builder
     builder.build.side_effect = created_apps
 
     adapter = None
@@ -1378,6 +1383,11 @@ async def test_telegram_run_rebuilds_fresh_application_after_recreate_init_failu
     builder.token.return_value = builder
     builder.base_url.return_value = builder
     builder.base_file_url.return_value = builder
+    builder.connect_timeout.return_value = builder
+    builder.read_timeout.return_value = builder
+    builder.write_timeout.return_value = builder
+    builder.media_write_timeout.return_value = builder
+    builder.pool_timeout.return_value = builder
     builder.build.side_effect = created_apps
 
     adapter = None
@@ -1428,3 +1438,42 @@ async def test_telegram_run_rebuilds_fresh_application_after_recreate_init_failu
     app_two.shutdown.assert_awaited()
     app_three.initialize.assert_awaited()
     app_three.start.assert_awaited()
+
+
+def test_telegram_requests_get_room_for_media_uploads():
+    """PTB's 5 s / 20 s / 1 s defaults timed out sending a few photos at once."""
+    TelegramPlatformAdapter = _load_telegram_adapter()
+    module_globals = TelegramPlatformAdapter.__init__.__globals__
+    builder = MagicMock()
+    for name in (
+        "token",
+        "base_url",
+        "base_file_url",
+        "connect_timeout",
+        "read_timeout",
+        "write_timeout",
+        "media_write_timeout",
+        "pool_timeout",
+    ):
+        getattr(builder, name).return_value = builder
+    builder.build.return_value = MockTelegramBuilder.create_application()
+    with patch.dict(
+        module_globals,
+        {
+            "ApplicationBuilder": MagicMock(return_value=builder),
+            "AsyncIOScheduler": MagicMock(
+                return_value=MockTelegramBuilder.create_scheduler()
+            ),
+        },
+    ):
+        TelegramPlatformAdapter(make_platform_config("telegram"), {}, asyncio.Queue())
+        config = make_platform_config("telegram")
+        config["telegram_request_timeout"] = 90
+        TelegramPlatformAdapter(config, {}, asyncio.Queue())
+    assert [c.args for c in builder.read_timeout.call_args_list] == [(60.0,), (90.0,)]
+    assert [c.args for c in builder.media_write_timeout.call_args_list] == [
+        (120.0,),
+        (180.0,),
+    ]
+    builder.pool_timeout.assert_called_with(30)
+    builder.connect_timeout.assert_called_with(30)

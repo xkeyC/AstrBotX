@@ -313,6 +313,10 @@
         "description": "ファイル API アドレス",
         "hint": "Telegram Bot API のファイルダウンロード用インターフェースのベースアドレスです。公式サービスを使用する場合、通常は変更不要です。"
       },
+      "telegram_request_timeout": {
+          "description": "リクエストタイムアウト（秒）",
+          "hint": "Telegram Bot API の応答とアップロードを待つ時間です。画像・動画・ファイルのアップロードはこの 2 倍です。回線が遅い場合や複数の画像を一度に送る場合は大きくしてください。"
+      },
       "bot_token": {
         "description": "Slack Bot Token",
         "hint": "Slack アプリの Bot User OAuth Token です。通常は xoxb- で始まります。"

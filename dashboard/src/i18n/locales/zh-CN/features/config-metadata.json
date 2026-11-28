@@ -313,6 +313,10 @@
         "description": "文件 API 地址",
         "hint": "Telegram Bot API 文件下载接口的基础地址。使用官方服务时通常无需修改。"
       },
+      "telegram_request_timeout": {
+          "description": "请求超时（秒）",
+          "hint": "调用 Telegram Bot API 时等待响应和上传的时间；发送图片、视频、文件的上传时间按它的两倍。网络慢或一次发多张图时调大。"
+      },
       "bot_token": {
         "description": "Slack Bot Token",
         "hint": "Slack 应用的 Bot User OAuth Token，通常以 xoxb- 开头。"
